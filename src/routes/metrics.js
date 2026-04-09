@@ -18,7 +18,7 @@ router.get('/summary', (req, res) => {
     wpp: q('SELECT SUM(whatsapp_redirect) as count FROM conversations WHERE doctor_id=?'),
     urg: q('SELECT SUM(urgency) as count FROM conversations WHERE doctor_id=?'),
     msgs: q('SELECT COUNT(*) as count FROM messages m JOIN conversations c ON m.conversation_id=c.id WHERE c.doctor_id=?'),
-    engajadas: q('SELECT COUNT(DISTINCT c.id) as count FROM conversations c WHERE c.doctor_id=? AND (SELECT COUNT(*) FROM messages WHERE conversation_id=c.id AND role=\'user\') > 1'),
+    engajadas: q("SELECT COUNT(DISTINCT c.id) as count FROM conversations c WHERE c.doctor_id=? AND (SELECT COUNT(*) FROM messages WHERE conversation_id=c.id AND role='user') > 1"),
   };
   db.close();
   res.json(r);
