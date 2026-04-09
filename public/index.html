@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel — Chatbot Medico</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-height:100vh}
+.login-page{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f2540,#1e3a5f)}
+.login-box{background:#fff;border-radius:16px;padding:40px;width:100%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.login-box h1{font-size:20px;color:#1a3a5c;margin-bottom:4px}
+.login-box p{font-size:13px;color:#888;margin-bottom:24px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px}
+.field input,.field textarea,.field select{width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:10px;font-size:14px;font-family:inherit;outline:none}
+.field input:focus,.field textarea:focus{border-color:#1e3a5f}
+.field textarea{resize:vertical;min-height:80px}
+.btn{padding:10px 20px;border:none;border-radius:10px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer}
+.btn-primary{background:linear-gradient(135deg,#1e3a5f,#2a6a9f);color:#fff;width:100%}
+.btn-sm{padding:6px 14px;font-size:12px;border-radius:8px}
+.btn-danger{background:#fee;color:#e74c3c;border:1px solid #fcc}
+.btn-outline{background:#fff;color:#1e3a5f;border:1.5px solid #1e3a5f}
+.error{color:#e74c3c;font-size:12px;margin-top:8px}
+.toast{position:fixed;top:16px;right:16px;background:#27ae60;color:#fff;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;z-index:99;display:none}
+.toast.show{display:block}
+
+.app{display:none}
+.app.active{display:flex;width:100%;height:100vh}
+.sidebar{width:220px;background:#0f2540;color:#fff;height:100vh;flex-shrink:0;display:flex;flex-direction:column;padding:20px 0}
+.sidebar .logo{padding:0 20px 20px;font-size:16px;font-weight:700;border-bottom:1px solid rgba(255,255,255,.1)}
+.sidebar .logo span{color:#3897f0}
+.nav{flex:1;padding:16px 0}
+.nav a{display:flex;align-items:center;gap:10px;padding:10px 20px;color:rgba(255,255,255,.6);text-decoration:none;font-size:13px;font-weight:500;border-left:3px solid transparent}
+.nav a:hover,.nav a.active{color:#fff;background:rgba(255,255,255,.05);border-left-color:#3897f0}
+.sidebar .bot-status{padding:16px 20px;border-top:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:8px}
+.main{flex:1;padding:24px;overflow-y:auto;display:flex;flex-direction:column}
+.main.full{padding:0;height:100vh}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+.card{background:#fff;border-radius:12px;padding:20px;border:1px solid #eee;text-align:center;box-shadow:0 2px 4px rgba(0,0,0,.05)}
+.card .value{font-size:32px;font-weight:700;margin:8px 0 4px;line-height:1}
+.card .label{font-size:12px;color:#888;font-weight:500}
+.section{background:#fff;border-radius:12px;padding:24px;border:1px solid #eee;margin-bottom:20px}
+.section h3{font-size:16px;color:#1a2a3a;margin-bottom:16px;font-weight:600}
+.bar-wrap{height:10px;background:#f0f0f0;border-radius:6px;overflow:hidden;flex:1}
+.bar-fill{height:100%;border-radius:4px;transition:width .5s}
+
+.toggle{position:relative;width:44px;height:24px;cursor:pointer;display:inline-block}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;inset:0;background:#ccc;border-radius:24px;transition:.3s}
+.toggle .slider:before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.toggle input:checked+.slider{background:#27ae60}
+.toggle input:checked+.slider:before{transform:translateX(20px)}
+
+.page{display:none}.page.active{display:block}
+.page-flex{display:none}.page-flex.active{display:flex;flex-direction:column;flex:1}
+
+.crm-card{background:#fff;border-radius:12px;padding:16px;border:1px solid #eee;margin-bottom:8px;cursor:pointer}
+.crm-card:hover{border-color:#3897f0}
+.crm-thread{background:#fafafa;border-radius:10px;padding:12px;max-height:280px;overflow-y:auto;margin-top:12px}
+.msg-row{display:flex;margin-bottom:6px}
+.msg-row.u{justify-content:flex-end}.msg-row.b{justify-content:flex-start}
+.msg-av{width:22px;height:22px;border-radius:50%;margin-right:6px;background:linear-gradient(135deg,#1a3a5c,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:7px;font-weight:700;margin-top:2px;flex-shrink:0}
+.msg-bub{padding:7px 11px;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-width:75%}
+.msg-row.u .msg-bub{background:#3897f0;color:#fff;border-radius:14px 14px 3px 14px}
+.msg-row.b .msg-bub{background:#efefef;color:#262626;border-radius:14px 14px 14px 3px}
+.msg-bub a{text-decoration:underline}
+.msg-row.u .msg-bub a{color:#d0e8ff}.msg-row.b .msg-bub a{color:#3897f0}
+.msg-time{font-size:9px;color:#aaa;margin-top:1px}
+.msg-row.u .msg-time{text-align:right}
+
+.sim-hdr{border-bottom:1px solid #efefef;padding:10px 14px;display:flex;align-items:center;gap:10px}
+.sim-msgs{flex:1;overflow-y:auto;padding:12px}
+.sim-input{border-top:1px solid #efefef;padding:8px 12px}
+.sim-wrap{display:flex;align-items:center;border:1px solid #ddd;border-radius:20px;padding:4px 4px 4px 14px}
+.sim-wrap input{flex:1;border:none;outline:none;font-size:14px;background:transparent;font-family:inherit}
+.typing-dots{display:flex;gap:4px;padding:4px 0}
+.typing-dots span{width:6px;height:6px;border-radius:50%;background:#999;animation:pulse 1s ease infinite}
+.typing-dots span:nth-child(2){animation-delay:.2s}
+.typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600}
+.sched-row{display:grid;grid-template-columns:110px 1fr 1fr 1fr;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0}
+.sched-row .day{font-weight:600;font-size:13px}
+.sched-row input{padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;outline:none;font-family:inherit}
+.sched-row .sm{font-size:9px;color:#aaa;margin-bottom:2px}
+.instr-item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #f0f0f0}
+.instr-cat{background:#e8f0fe;color:#1e3a5f;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap;margin-top:2px}
+.instr-text{flex:1;font-size:12px;line-height:1.5;white-space:pre-wrap}
+@media(max-width:768px){.sidebar{width:60px}.sidebar .logo span,.nav a span:not(.icon),.bot-status span:last-child{display:none}.main{margin-left:60px;padding:14px}.cards{grid-template-columns:1fr 1fr}.sched-row{grid-template-columns:1fr}.card{padding:14px}.card .value{font-size:24px}}
+</style>
+</head>
+<body>
+
+<div class="login-page" id="loginPage">
+<div class="login-box">
+<h1>Painel do Chatbot</h1>
+<p>Acesse com suas credenciais</p>
+<div class="field"><label>E-mail</label><input id="lEmail" placeholder="seu@email.com"></div>
+<div class="field"><label>Senha</label><input type="password" id="lPass" placeholder="Sua senha"></div>
+<div class="error" id="lErr"></div>
+<button class="btn btn-primary" onclick="doLogin()" style="margin-top:8px">Entrar</button>
+</div>
+</div>
+
+<div class="app" id="app">
+<div class="sidebar">
+<div class="logo">Chat<span>Bot</span></div>
+<div class="nav">
+<a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
+<a href="#" data-page="crm"><span class="icon">👥</span><span>Conversas</span></a>
+<a href="#" data-page="agenda"><span class="icon">📅</span><span>Agenda</span></a>
+<a href="#" data-page="instrucoes"><span class="icon">📝</span><span>Instruções</span></a>
+<a href="#" data-page="simulacao"><span class="icon">💬</span><span>Simulação</span></a>
+<a href="#" data-page="config"><span class="icon">⚙️</span><span>Configurações</span></a>
+</div>
+<div class="bot-status">
+<label class="toggle"><input type="checkbox" id="botToggle" onchange="toggleBot(this.checked)"><span class="slider"></span></label>
+<span id="botLabel">Bot ativo</span>
+</div>
+</div>
+
+<div class="main" id="mainArea">
+<div class="topbar" id="topbar">
+<div><h2 id="pageTitle">Dashboard</h2><div style="font-size:13px;color:#888" id="doctorName"></div></div>
+<button class="btn btn-sm btn-outline" onclick="doLogout()">Sair</button>
+</div>
+
+<div class="page active" id="page-dashboard">
+<div class="cards" id="metCards"></div>
+<div class="section"><h3>Funil de conversão</h3><div id="funnel"></div></div>
+<div class="section"><h3>Conversas recentes</h3><div id="recentList">Carregando...</div></div>
+</div>
+
+<div class="page" id="page-crm">
+<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+<input id="crmSearch" placeholder="Buscar nome, convênio..." style="padding:7px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:12px;outline:none;width:260px;font-family:inherit" oninput="renderCRM()">
+<button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="setCrmFilter('all')">Todos</button>
+<button class="btn btn-sm" style="background:#eee;color:#666" onclick="setCrmFilter('link')">Link enviado</button>
+<button class="btn btn-sm" style="background:#eee;color:#666" onclick="setCrmFilter('wpp')">WhatsApp</button>
+<button class="btn btn-sm" style="background:#eee;color:#666" onclick="setCrmFilter('urgencia')">Urgência</button>
+<button class="btn btn-sm" style="background:#eee;color:#666" onclick="setCrmFilter('sem')">Sem conversão</button>
+<span id="crmCount" style="font-size:11px;color:#888;margin-left:auto"></span>
+</div>
+<div id="crmList"></div>
+</div>
+
+<div class="page" id="page-agenda">
+<div class="section"><h3>Horários semanais</h3><p style="font-size:12px;color:#888;margin-bottom:12px">O chatbot usa esses dados para informar aos pacientes.</p><div id="schedGrid"></div><button class="btn btn-sm btn-primary" onclick="saveSchedule()" style="margin-top:14px;width:auto">Salvar agenda</button></div>
+</div>
+
+<div class="page" id="page-instrucoes">
+<div class="section">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="margin:0">Instruções do bot</h3><button class="btn btn-sm btn-outline" onclick="showAddInstr()">+ Nova</button></div>
+<div id="instrList">Carregando...</div>
+</div>
+<div class="section" id="addInstrBox" style="display:none">
+<h3>Adicionar instrução</h3>
+<div class="field"><label>Categoria</label><select id="newInstrCat"><option value="memoria">Memória</option><option value="convenios">Convênios</option><option value="procedimentos">Procedimentos</option><option value="pos_operatorio">Pós-operatório</option><option value="agendamento">Agendamento</option><option value="personalizado">Personalizado</option></select></div>
+<div class="field"><label>Conteúdo</label><textarea id="newInstrContent" placeholder="Escreva a instrução..."></textarea></div>
+<div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="addInstr()" style="width:auto">Adicionar</button><button class="btn btn-sm btn-danger" onclick="document.getElementById('addInstrBox').style.display='none'">Cancelar</button></div>
+</div>
+</div>
+
+<div class="page-flex" id="page-simulacao" style="max-width:460px;margin:0 auto;width:100%;border-left:1px solid #eee;border-right:1px solid #eee">
+<div class="sim-hdr">
+<div style="width:36px;height:36px;border-radius:50%;padding:2px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);flex-shrink:0"><div style="width:100%;height:100%;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;padding:2px"><div style="width:100%;height:100%;border-radius:50%;background:linear-gradient(135deg,#1a3a5c,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700">DA</div></div></div>
+<div style="flex:1"><div style="font-size:14px;font-weight:600" id="simName">Simulação</div><div style="font-size:11px;color:#8e8e8e" id="simStatus">Teste como se fosse um paciente</div></div>
+<button class="btn btn-sm" style="background:#fafafa;border:1px solid #ddd;color:#666" onclick="resetSim()">Resetar</button>
+</div>
+<div class="sim-msgs" id="simMsgs"><div style="text-align:center;padding:40px 20px;color:#bbb;font-size:13px">Escreva como se fosse um paciente</div></div>
+<div class="sim-input"><div class="sim-wrap"><input id="simInput" placeholder="Mensagem..." onkeydown="if(event.key==='Enter')sendSim()"><button id="simSend" style="border:none;background:none;color:#3897f0;font-size:14px;font-weight:600;cursor:pointer;padding:3px 8px;display:none;font-family:inherit" onclick="sendSim()">Enviar</button></div></div>
+</div>
+
+<div class="page" id="page-config">
+<div class="section" style="max-width:500px">
+<h3>Dados da clínica</h3>
+<div class="field"><label>Nome do doutor</label><input id="cfgName"></div>
+<div class="field"><label>Clínica</label><input id="cfgClinic"></div>
+<div class="field"><label>Instagram</label><input id="cfgInsta"></div>
+<div class="field"><label>Telefone</label><input id="cfgPhone"></div>
+<div class="field"><label>WhatsApp</label><input id="cfgWpp"></div>
+<div class="field"><label>Endereço</label><input id="cfgAddr"></div>
+<button class="btn btn-sm btn-primary" onclick="saveProfile()" style="width:auto">Salvar</button>
+</div>
+<div class="section" style="max-width:500px;margin-top:16px">
+<h3>Delay de resposta</h3>
+<p style="font-size:12px;color:#888;margin-bottom:12px">Tempo que o bot espera antes de responder (segundos). Vale pra simulação e Instagram.</p>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+<div class="field"><label>Primeira mensagem</label><input type="number" min="0" max="15" id="cfgDelayFirst"></div>
+<div class="field"><label>Mínimo</label><input type="number" min="0" max="15" id="cfgDelayMin"></div>
+<div class="field"><label>Máximo</label><input type="number" min="0" max="15" id="cfgDelayMax"></div>
+</div>
+<button class="btn btn-sm btn-primary" onclick="saveDelay()" style="width:auto">Salvar delay</button>
+</div>
+</div>
+
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var TOKEN=localStorage.getItem('token'),DOCTOR=null;
+var API='/api';
+var DAYS=['segunda','terca','quarta','quinta','sexta','sabado'];
+var DAY_LABELS={segunda:'Segunda-feira',terca:'Terça-feira',quarta:'Quarta-feira',quinta:'Quinta-feira',sexta:'Sexta-feira',sabado:'Sábado'};
+var CAT_LABELS={memoria:'Memória',convenios:'Convênios',procedimentos:'Procedimentos',pos_operatorio:'Pós-op',agendamento:'Agendamento',personalizado:'Personalizado'};
+var crmFilter='all';
+var simHistory=[];
+var simBusy=false;
+
+function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},2000)}
+
+async function api(path,opts){
+  var h={'Content-Type':'application/json'};
+  if(TOKEN)h['Authorization']='Bearer '+TOKEN;
+  try{var r=await fetch(API+path,Object.assign({},opts,{headers:h}));if(r.status===401){doLogout();return null}return r.json()}catch(e){return null}
+}
+
+async function doLogin(){
+  var email=document.getElementById('lEmail').value;
+  var pass=document.getElementById('lPass').value;
+  var data=await api('/auth/login',{method:'POST',body:JSON.stringify({email:email,password:pass})});
+  if(data&&data.error){document.getElementById('lErr').textContent=data.error;return}
+  if(data&&data.token){TOKEN=data.token;DOCTOR=data.doctor;localStorage.setItem('token',TOKEN);showApp()}
+}
+function doLogout(){TOKEN=null;DOCTOR=null;localStorage.removeItem('token');location.reload()}
+async function checkAuth(){if(!TOKEN)return;var d=await api('/settings/profile');if(d&&d.id){DOCTOR=d;showApp()}else doLogout()}
+
+function showApp(){
+  document.getElementById('loginPage').style.display='none';
+  document.getElementById('app').classList.add('active');
+  document.getElementById('doctorName').textContent=DOCTOR.name+' — '+(DOCTOR.clinic||'');
+  document.getElementById('botToggle').checked=DOCTOR.bot_active;
+  document.getElementById('botLabel').textContent=DOCTOR.bot_active?'Bot ativo':'Bot pausado';
+  document.getElementById('simName').textContent='Simulação — '+DOCTOR.name;
+  loadDashboard();
+}
+
+document.querySelectorAll('.nav a').forEach(function(a){
+  a.addEventListener('click',function(e){
+    e.preventDefault();
+    document.querySelectorAll('.nav a').forEach(function(x){x.classList.remove('active')});
+    a.classList.add('active');
+    var pg=a.dataset.page;
+    document.querySelectorAll('.page,.page-flex').forEach(function(p){p.classList.remove('active')});
+    document.getElementById('page-'+pg).classList.add('active');
+    var titles={dashboard:'Dashboard',crm:'Conversas',agenda:'Agenda Semanal',instrucoes:'Instruções do Bot',simulacao:'Simulação',config:'Configurações'};
+    document.getElementById('pageTitle').textContent=titles[pg]||pg;
+    var mainArea=document.getElementById('mainArea');
+    var topbar=document.getElementById('topbar');
+    if(pg==='simulacao'){mainArea.classList.add('full');topbar.style.display='none'}
+    else{mainArea.classList.remove('full');topbar.style.display='flex'}
+    if(pg==='dashboard')loadDashboard();
+    if(pg==='crm')loadCRM();
+    if(pg==='agenda')loadSchedule();
+    if(pg==='instrucoes')loadInstructions();
+    if(pg==='config')loadProfile();
+  });
+});
+
+async function loadDashboard(){
+  var m=await api('/metrics/summary');
+  if(!m){m={today:0,week:0,total:0,links:0,wpp:0,urg:0}}
+  
+  document.getElementById('metCards').innerHTML=[
+    ['#3897f0',Math.max(0,m.today||0),'Hoje'],
+    ['#27ae60',Math.max(0,m.week||0),'7 dias'],
+    ['#1abc9c',Math.max(0,m.total||0),'Total'],
+    ['#9b59b6',Math.max(0,m.links||0),'Links'],
+    ['#f39c12',Math.max(0,m.wpp||0),'WhatsApp'],
+    ['#e74c3c',Math.max(0,m.urg||0),'Urgências']
+  ].map(function(x){return '<div class="card"><div class="value" style="color:'+x[0]+'">'+x[1]+'</div><div class="label">'+x[2]+'</div></div>'}).join('');
+
+  var total=Math.max(1,m.total||1);var links=Math.max(0,m.links||0);var engajadas=Math.max(0,m.engajadas||0);
+  var cliques=Math.round(links*0.6);
+  var funnelData=[
+    ['Mensagens',total,100,'#3897f0'],
+    ['Engajadas (2+)',engajadas,Math.round((engajadas/total)*100),'#2196f3'],
+    ['Com link',links,Math.round((links/total)*100),'#9b59b6'],
+    ['Cliques est.',cliques,Math.round((cliques/total)*100),'#27ae60']
+  ];
+  document.getElementById('funnel').innerHTML=funnelData.map(function(x){return '<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><div style="width:140px;font-size:12px;font-weight:500;color:#555">'+x[0]+'</div><div class="bar-wrap"><div class="bar-fill" style="width:'+Math.max(x[2],2)+'%;background:'+x[3]+';transition:width .3s"></div></div><div style="width:45px;font-size:13px;font-weight:600;color:'+x[3]+';text-align:right">'+x[1]+'</div></div>'}).join('');
+
+  var rc=await api('/metrics/recent');
+  if(!rc||!rc.length){
+    document.getElementById('recentList').innerHTML='<div style="text-align:center;padding:30px 20px;color:#aaa;font-size:13px">Nenhuma conversa registrada<br><span style="font-size:11px">Envie mensagens para que apareçam aqui</span></div>';
+    return;
+  }
+  document.getElementById('recentList').innerHTML=rc.slice(0,5).map(function(r){
+    var clienteName=r.lead_name||'Cliente';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid #f5f5f5;font-size:13px"><div style="flex:1"><div style="font-weight:600;color:#333">'+clienteName+'</div><div style="color:#999;margin-top:3px;font-size:12px">'+((r.first_message||'...').slice(0,45))+(r.first_message && r.first_message.length>45?'...':'')+'</div></div><div style="display:flex;align-items:center;gap:10px;flex-shrink:0;white-space:nowrap">'+(r.link_sent?'<span class="badge" style="background:#f0e6ff;color:#9b59b6;font-size:10px">Link</span>':'')+' <span style="color:#bbb;font-weight:600">'+r.message_count+' msg</span></div></div>'
+  }).join('');
+}
+
+var crmData=[];
+var stLabels={agendou:['Agendou','#e8f5e9','#2e7d32'],link:['Link enviado','#f0e6ff','#7b1fa2'],wpp:['WhatsApp','#fce4ec','#c2185b'],urgencia:['Urgência','#ffebee','#c62828'],sem:['Sem conversão','#fce4ec','#c62828']};
+
+async function loadCRM(){
+  document.getElementById('crmList').innerHTML='<div style="text-align:center;padding:40px;color:#aaa">Carregando conversas...</div>';
+  var data=await api('/conversations');
+  if(!data){document.getElementById('crmList').innerHTML='<div style="text-align:center;padding:40px;color:#c62828">Erro ao carregar conversas</div>';return}
+  crmData=data||[];
+  crmFilter='all';
+  renderCRM();
+  if(!crmData.length){toast('Nenhuma conversa registrada ainda');}
+}
+
+function setCrmFilter(f){crmFilter=f;renderCRM()}
+function renderCRM(){
+  var q=(document.getElementById('crmSearch').value||'').toLowerCase();
+  var data=crmData.slice();
+  if(crmFilter!=='all')data=data.filter(function(d){return d.st===crmFilter});
+  if(q)data=data.filter(function(d){return(d.name+' '+d.mot+' '+(d.conv||'')).toLowerCase().includes(q)});
+  document.getElementById('crmCount').textContent=data.length+' conversa'+(data.length!==1?'s':'');
+  if(!data.length){document.getElementById('crmList').innerHTML='<div style="text-align:center;padding:40px;color:#aaa">Nenhuma conversa encontrada</div>';return}
+  document.getElementById('crmList').innerHTML=data.map(function(ch){
+    var st=stLabels[ch.st]||stLabels.sem;
+    var clienteName=ch.name||'Cliente';
+    return '<div class="crm-card" onclick="toggleCrm('+ch.id+')"><div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#1e3a5f,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700">'+clienteName.charAt(0)+'</div><div><div style="font-size:13px;font-weight:600">'+clienteName+'</div><div style="font-size:11px;color:#888">'+ch.mot+(ch.conv?' — '+ch.conv:'')+(ch.phone?' — '+ch.phone:'')+'</div></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge" style="background:'+st[1]+';color:'+st[2]+'">'+st[0]+'</span><span style="font-size:11px;color:#aaa">'+ch.date+'</span></div></div><div id="crm-thread-'+ch.id+'" style="display:none" onclick="event.stopPropagation()"><div class="crm-thread">'+ch.msgs.map(function(m){var isU=m.r==='u';return '<div class="msg-row '+(isU?'u':'b')+'">'+(isU?'':'<div class="msg-av">DA</div>')+'<div><div class="msg-bub">'+m.c.replace(/(https?:\/\/[^\s]+)/g,'<a href="$1" target="_blank">$1</a>')+'</div><div class="msg-time" style="text-align:'+(isU?'right':'left')+'">'+m.t+'</div></div></div>'}).join('')+'</div></div></div>'
+  }).join('');
+}
+function toggleCrm(id){var el=document.getElementById('crm-thread-'+id);el.style.display=el.style.display==='none'?'block':'none'}
+
+async function loadSchedule(){
+  var rows=await api('/schedule');if(!rows)return;
+  var map={};rows.forEach(function(r){map[r.day]=r});
+  document.getElementById('schedGrid').innerHTML=DAYS.map(function(d){
+    var s=map[d]||{};
+    return '<div class="sched-row"><div class="day">'+DAY_LABELS[d]+'</div><div><div class="sm">Manhã</div><input id="s-'+d+'-ms" value="'+(s.morning_start||'')+'" placeholder="09:00" style="width:65px"> - <input id="s-'+d+'-me" value="'+(s.morning_end||'')+'" placeholder="11:00" style="width:65px"></div><div><div class="sm">Tarde</div><input id="s-'+d+'-as" value="'+(s.afternoon_start||'')+'" placeholder="13:30" style="width:65px"> - <input id="s-'+d+'-ae" value="'+(s.afternoon_end||'')+'" placeholder="15:50" style="width:65px"></div><div><div class="sm">Local</div><input id="s-'+d+'-loc" value="'+(s.location||'')+'" placeholder="Unidade, andar" style="width:100%"></div></div>'
+  }).join('');
+}
+async function saveSchedule(){
+  for(var i=0;i<DAYS.length;i++){var d=DAYS[i];await api('/schedule/'+d,{method:'PUT',body:JSON.stringify({morning_start:document.getElementById('s-'+d+'-ms').value||null,morning_end:document.getElementById('s-'+d+'-me').value||null,afternoon_start:document.getElementById('s-'+d+'-as').value||null,afternoon_end:document.getElementById('s-'+d+'-ae').value||null,location:document.getElementById('s-'+d+'-loc').value||null})})}
+  toast('Agenda salva!');
+}
+
+async function loadInstructions(){
+  var rows=await api('/instructions');if(!rows)return;
+  if(!rows.length){document.getElementById('instrList').innerHTML='<div style="color:#aaa">Nenhuma instrução</div>';return}
+  document.getElementById('instrList').innerHTML=rows.map(function(r){
+    return '<div class="instr-item"><span class="instr-cat">'+(CAT_LABELS[r.category]||r.category)+'</span><div class="instr-text" style="color:'+(r.active?'#333':'#bbb')+'">'+r.content.replace(/\n/g,'<br>')+'</div><label class="toggle" style="flex-shrink:0"><input type="checkbox" '+(r.active?'checked':'')+' onchange="toggleInstr('+r.id+',this.checked)"><span class="slider"></span></label><button class="btn btn-sm btn-danger" onclick="deleteInstr('+r.id+')">×</button></div>'
+  }).join('');
+}
+function showAddInstr(){document.getElementById('addInstrBox').style.display='block'}
+async function addInstr(){var cat=document.getElementById('newInstrCat').value;var content=document.getElementById('newInstrContent').value;if(!content)return;await api('/instructions',{method:'POST',body:JSON.stringify({category:cat,content:content})});document.getElementById('newInstrContent').value='';document.getElementById('addInstrBox').style.display='none';loadInstructions();toast('Instrução adicionada!')}
+async function toggleInstr(id,active){await api('/instructions/'+id,{method:'PUT',body:JSON.stringify({active:active})})}
+async function deleteInstr(id){if(confirm('Remover?')){await api('/instructions/'+id,{method:'DELETE'});loadInstructions()}}
+
+var simEl=document.getElementById('simMsgs');
+var simInp=document.getElementById('simInput');
+var simSendBtn=document.getElementById('simSend');
+simInp.addEventListener('input',function(){simSendBtn.style.display=simInp.value.trim()?'block':'none'});
+
+function resetSim(){simHistory=[];simEl.innerHTML='<div style="text-align:center;padding:40px 20px;color:#bbb;font-size:13px">Escreva como se fosse um paciente</div>';toast('Conversa resetada')}
+
+function simAddMsg(role,text){
+  if(simHistory.length<=1)simEl.innerHTML='';
+  var isU=role==='user';
+  var now=new Date();var ts=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  var div=document.createElement('div');div.className='msg-row '+(isU?'u':'b');
+  var html='';
+  if(!isU)html+='<div class="msg-av">DA</div>';
+  html+='<div style="max-width:78%"><div class="msg-bub">'+text.replace(/(https?:\/\/[^\s]+)/g,'<a href="$1" target="_blank">$1</a>')+'</div><div class="msg-time" style="text-align:'+(isU?'right':'left')+'">'+ts+'</div></div>';
+  div.innerHTML=html;simEl.appendChild(div);simEl.scrollTop=simEl.scrollHeight;
+}
+function simShowTyping(){
+  var div=document.createElement('div');div.className='msg-row b';div.id='simTyping';
+  div.innerHTML='<div class="msg-av">DA</div><div><div class="msg-bub"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>';
+  simEl.appendChild(div);simEl.scrollTop=simEl.scrollHeight;
+  document.getElementById('simStatus').textContent='Digitando...';document.getElementById('simStatus').style.color='#3897f0';
+}
+function simHideTyping(){
+  var t=document.getElementById('simTyping');if(t)t.remove();
+  document.getElementById('simStatus').textContent='Teste como se fosse um paciente';document.getElementById('simStatus').style.color='#8e8e8e';
+}
+
+async function sendSim(){
+  var text=simInp.value.trim();if(!text||simBusy)return;
+  simBusy=true;simInp.disabled=true;
+  simHistory.push({role:'user',content:text});
+  simAddMsg('user',text);
+  simInp.value='';simSendBtn.style.display='none';
+  simShowTyping();
+  try{
+    var res=await api('/chat',{method:'POST',body:JSON.stringify({messages:simHistory})});
+    simHideTyping();
+    var reply=(res&&res.reply)?res.reply:'Tive uma dificuldade. Liga: (21) 2703-6100.';
+    simAddMsg('assistant',reply);
+    simHistory.push({role:'assistant',content:reply});
+  }catch(e){
+    simHideTyping();
+    simAddMsg('assistant','Tive uma dificuldade. Liga: (21) 2703-6100.');
+  }
+  simBusy=false;simInp.disabled=false;simInp.focus();
+}
+
+async function loadProfile(){
+  var d=await api('/settings/profile');if(!d)return;
+  document.getElementById('cfgName').value=d.name||'';
+  document.getElementById('cfgClinic').value=d.clinic||'';
+  document.getElementById('cfgInsta').value=d.instagram_handle||'';
+  document.getElementById('cfgPhone').value=d.phone||'';
+  document.getElementById('cfgWpp').value=d.whatsapp||'';
+  document.getElementById('cfgAddr').value=d.address||'';
+  document.getElementById('cfgDelayFirst').value=d.delay_first||3;
+  document.getElementById('cfgDelayMin').value=d.delay_min||2;
+  document.getElementById('cfgDelayMax').value=d.delay_max||3;
+}
+async function saveProfile(){
+  await api('/settings/profile',{method:'PUT',body:JSON.stringify({name:document.getElementById('cfgName').value,clinic:document.getElementById('cfgClinic').value,instagram_handle:document.getElementById('cfgInsta').value,phone:document.getElementById('cfgPhone').value,whatsapp:document.getElementById('cfgWpp').value,address:document.getElementById('cfgAddr').value})});
+  toast('Dados salvos!');
+}
+async function saveDelay(){
+  await api('/settings/delay',{method:'PUT',body:JSON.stringify({delay_first:Number(document.getElementById('cfgDelayFirst').value),delay_min:Number(document.getElementById('cfgDelayMin').value),delay_max:Number(document.getElementById('cfgDelayMax').value)})});
+  toast('Delay salvo!');
+}
+async function toggleBot(active){
+  await api('/settings/toggle-bot',{method:'PUT',body:JSON.stringify({active:active})});
+  document.getElementById('botLabel').textContent=active?'Bot ativo':'Bot pausado';
+}
+
+document.getElementById('lPass').addEventListener('keydown',function(e){if(e.key==='Enter')doLogin()});
+renderCRM();
+checkAuth();
+</script>
+</body>
+</html>

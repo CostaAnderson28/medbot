@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Dr. Antonio — Chat</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:#fff;height:100dvh;display:flex;justify-content:center}
+#app{width:100%;max-width:440px;height:100dvh;display:flex;flex-direction:column}
+.hdr{padding:10px 14px;border-bottom:1px solid #efefef;display:flex;align-items:center;gap:10px}
+.av{width:40px;height:40px;border-radius:50%;padding:2px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888)}
+.av .in{width:100%;height:100%;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;padding:2px}
+.av .in .ic{width:100%;height:100%;border-radius:50%;background:linear-gradient(135deg,#1a3a5c,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700}
+.msgs{flex:1;overflow-y:auto;padding:14px 12px}.msgs::-webkit-scrollbar{width:0}
+.mr{display:flex;margin-bottom:8px}.mr.u{justify-content:flex-end}.mr.b{justify-content:flex-start}
+.mav{width:28px;height:28px;border-radius:50%;margin-right:8px;background:linear-gradient(135deg,#1a3a5c,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;margin-top:2px}
+.mb{padding:10px 14px;font-size:14px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-width:75%}
+.mr.u .mb{background:#3897f0;color:#fff;border-radius:20px 20px 4px 20px}
+.mr.b .mb{background:#efefef;color:#262626;border-radius:20px 20px 20px 4px}
+.mb a{color:#3897f0;text-decoration:underline}.mr.u .mb a{color:#d0e8ff}
+.mt{font-size:10px;color:#8e8e8e;margin-top:2px}.mr.u .mt{text-align:right}
+.ibar{border-top:1px solid #efefef;padding:10px 12px}
+.iw{display:flex;align-items:center;border:1px solid #dbdbdb;border-radius:24px;padding:4px 4px 4px 16px}
+.iw input{flex:1;border:none;outline:none;font-size:14px;background:transparent;padding:6px 0}
+.sbtn{border:none;background:none;color:#3897f0;font-size:14px;font-weight:600;cursor:pointer;padding:4px 10px;display:none}
+.sbtn.sh{display:block}
+.td{display:flex;gap:4px;padding:4px 0}.td span{width:7px;height:7px;border-radius:50%;background:#8e8e8e;animation:pu 1s ease infinite}
+.td span:nth-child(2){animation-delay:.2s}.td span:nth-child(3){animation-delay:.4s}
+@keyframes pu{0%,100%{opacity:1}50%{opacity:.3}}
+</style></head><body>
+<div id="app">
+<div class="hdr"><div class="av"><div class="in"><div class="ic">DA</div></div></div><div style="flex:1"><div style="font-size:14px;font-weight:600">dr.antonio.oftalmo</div><div style="font-size:12px;color:#8e8e8e" id="st">Oftalmoclinica Icarai</div></div></div>
+<div class="msgs" id="ms"><div style="text-align:center;padding:40px 20px;color:#bbb;font-size:13px">Envie uma mensagem</div></div>
+<div class="ibar"><div class="iw"><input id="ip" placeholder="Mensagem..." autocomplete="off"><button class="sbtn" id="sb" onclick="si()">Enviar</button></div></div>
+</div>
+<script>
+var ms=document.getElementById('ms'),ip=document.getElementById('ip'),sb=document.getElementById('sb'),st=document.getElementById('st');
+var h=[],busy=false,started=false;
+ip.addEventListener('input',function(){sb.classList.toggle('sh',ip.value.trim().length>0)});
+ip.addEventListener('keydown',function(e){if(e.key==='Enter')si()});
+function si(){var t=ip.value.trim();if(t){go(t);ip.value='';sb.classList.remove('sh')}}
+function ts(){var n=new Date();return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')}
+function lk(t){return t.replace(/(https?:\/\/[^\s]+)/g,'<a href="$1" target="_blank">$1</a>')}
+function am(r,t){if(!started){ms.innerHTML='';started=true}var d=document.createElement('div');d.className='mr '+(r==='user'?'u':'b');var s='';if(r!=='user')s+='<div class="mav">DA</div>';s+='<div><div class="mb">'+lk(t)+'</div><div class="mt">'+ts()+'</div></div>';d.innerHTML=s;ms.appendChild(d);ms.scrollTop=ms.scrollHeight}
+function ty(on){if(on){var d=document.createElement('div');d.className='mr b';d.id='tr';d.innerHTML='<div class="mav">DA</div><div><div class="mb"><div class="td"><span></span><span></span><span></span></div></div></div>';ms.appendChild(d);ms.scrollTop=ms.scrollHeight;st.textContent='Digitando...';st.style.color='#3897f0'}else{var t=document.getElementById('tr');if(t)t.remove();st.textContent='Oftalmoclinica Icarai';st.style.color='#8e8e8e'}}
+async function go(t){if(busy)return;busy=true;ip.disabled=true;am('user',t);h.push({role:'user',content:t});ty(true);try{var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:h})});var d=await r.json();ty(false);am('bot',d.reply);h.push({role:'assistant',content:d.reply})}catch(e){ty(false);var fb='Tive uma dificuldade. Liga: (21) 2703-6100.';am('bot',fb);h.push({role:'assistant',content:fb})}busy=false;ip.disabled=false;ip.focus()}
+</script></body></html>
