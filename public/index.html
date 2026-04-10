@@ -61,10 +61,13 @@ body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-heigh
 .crm-card{background:#fff;border-radius:12px;padding:16px;border:1px solid #eee;margin-bottom:8px;cursor:pointer}
 .crm-card:hover{border-color:#3897f0}
 .crm-thread{background:#fafafa;border-radius:10px;padding:12px;max-height:280px;overflow-y:auto;margin-top:12px}
-.msg-row{display:flex;margin-bottom:6px}
+.msg-row{display:flex;margin-bottom:6px;align-items:flex-start}
 .msg-row.u{justify-content:flex-end}.msg-row.b{justify-content:flex-start}
 .msg-av{width:22px;height:22px;border-radius:50%;margin-right:6px;background:linear-gradient(135deg,#1a3a5c,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:7px;font-weight:700;margin-top:2px;flex-shrink:0}
-.msg-bub{padding:7px 11px;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-width:75%}
+.msg-col{display:flex;flex-direction:column;max-width:78%}
+.msg-row.u .msg-col{align-items:flex-end}
+.msg-row.b .msg-col{align-items:flex-start}
+.msg-bub{padding:7px 11px;font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;display:inline-block;max-width:100%}
 .msg-row.u .msg-bub{background:#3897f0;color:#fff;border-radius:14px 14px 3px 14px}
 .msg-row.b .msg-bub{background:#efefef;color:#262626;border-radius:14px 14px 14px 3px}
 .msg-bub a{text-decoration:underline}
@@ -359,14 +362,31 @@ simInp.addEventListener('input',function(){simSendBtn.style.display=simInp.value
 
 function resetSim(){simHistory=[];simEl.innerHTML='<div style="text-align:center;padding:40px 20px;color:#bbb;font-size:13px">Escreva como se fosse um paciente</div>';toast('Conversa resetada')}
 
+function escapeHtml(text){
+  return String(text||'').replace(/[&<>'"]/g,function(ch){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]||ch;
+  });
+}
+
+function formatMessageText(text){
+  var raw=String(text||'');
+  return raw.split(/(https?:\/\/[^\s]+)/g).map(function(part){
+    if(/^https?:\/\/[^\s]+$/.test(part)){
+      var safeUrl=part.replace(/"/g,'%22');
+      return '<a href="'+safeUrl+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(part)+'</a>';
+    }
+    return escapeHtml(part);
+  }).join('');
+}
+
 function simAddMsg(role,text){
-  if(simHistory.length<=1)simEl.innerHTML='';
+  if(simEl.textContent.indexOf('Escreva como se fosse um paciente')!==-1)simEl.innerHTML='';
   var isU=role==='user';
   var now=new Date();var ts=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
   var div=document.createElement('div');div.className='msg-row '+(isU?'u':'b');
   var html='';
   if(!isU)html+='<div class="msg-av">DA</div>';
-  html+='<div style="max-width:78%"><div class="msg-bub">'+text.replace(/(https?:\/\/[^\s]+)/g,'<a href="$1" target="_blank">$1</a>')+'</div><div class="msg-time" style="text-align:'+(isU?'right':'left')+'">'+ts+'</div></div>';
+  html+='<div class="msg-col"><div class="msg-bub">'+formatMessageText(text)+'</div><div class="msg-time" style="text-align:'+(isU?'right':'left')+'">'+ts+'</div></div>';
   div.innerHTML=html;simEl.appendChild(div);simEl.scrollTop=simEl.scrollHeight;
 }
 function simShowTyping(){
