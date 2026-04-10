@@ -103,6 +103,7 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
+  console.log('POST recebido:', JSON.stringify(req.body, null, 2)); // ← adiciona isso
   try {
     if (req.body.object !== 'instagram') return;
     
