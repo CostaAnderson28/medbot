@@ -103,32 +103,46 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
-  console.log('POST recebido:', JSON.stringify(req.body, null, 2)); // ← adiciona isso
+  console.log('POST recebido:', JSON.stringify(req.body, null, 2));
   try {
     if (req.body.object !== 'instagram') return;
-    
+
     for (const entry of req.body.entry || []) {
       const pageId = entry.id;
       const doctorId = findDoctorByPageId(pageId);
-      
+
       if (!doctorId) {
         console.warn('Nenhum doutor para pageId:', pageId);
         continue;
       }
 
-      for (const event of entry.messaging || []) {
-        // Ignora echo messages
-        if (event.message?.is_echo) continue;
+      // Formato real do Instagram Webhooks
+      for (const change of entry.changes || []) {
+        if (change.field !== 'messages') continue;
+        const event = change.value;
 
-        const senderId = event.sender?.id;
-        const messageText = event.message?.text;
+        if (event?.message?.is_echo) continue;
+
+        const senderId = event?.sender?.id;
+        const messageText = event?.message?.text;
 
         if (!senderId || !messageText) {
           console.warn('Mensagem inválida ou sem texto');
           continue;
         }
 
-        // Processa com Claude e envia resposta
+        await handleInstagramMessage(senderId, messageText, doctorId);
+      }
+
+      // Formato Messenger Platform (fallback)
+      for (const event of entry.messaging || []) {
+        if (event.message?.is_echo) continue;
+
+        const senderId = event.sender?.id;
+        const messageText = event.message?.text;
+
+        if (!senderId || !messageText) continue;
+
         await handleInstagramMessage(senderId, messageText, doctorId);
       }
     }
