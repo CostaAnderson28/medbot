@@ -30,4 +30,4 @@ build/
 .vscode/
 .idea/
 *.swp
-*.swo
+*.swodata.db
