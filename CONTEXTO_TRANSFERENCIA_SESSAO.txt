@@ -1,0 +1,122 @@
+MEDBOT - CONTEXTO COMPLETO PARA CONTINUAR EM OUTRA MAQUINA
+Data de geracao: 2026-04-09
+
+1) RESUMO EXECUTIVO
+- Projeto: chatbot medico com painel web, API em Express e SQLite (better-sqlite3).
+- Integracoes: Instagram webhook (Meta), Claude (Anthropic), autenticacao JWT.
+- Deploy: VPS Hostinger com PM2 + Nginx.
+- Problema principal da sessao: dashboard sem carregar dados em producao.
+- Causa raiz principal encontrada: query SQL de engajadas em src/routes/metrics.js com aspas incorretas (quebrava parsing/execucao).
+- Estado final reportado: app online, health OK, logs antigos ainda mostravam erro anterior (nao necessariamente erro atual).
+
+2) STACK E ARQUITETURA
+- Backend: Node.js + Express (ESM).
+- Banco: SQLite (better-sqlite3), arquivo data.db.
+- Auth: JWT (middleware em src/middleware/auth.js).
+- Frontend: pagina unica em public/index.html.
+- Rotas principais:
+  - /api/auth
+  - /api/metrics
+  - /api/conversations
+  - /api/settings
+  - /api/schedule
+  - /api/instructions
+  - /webhook (GET verify + POST events Instagram)
+
+3) EVENTOS IMPORTANTES DA SESSAO (RETROSPECTO)
+- Foi identificado que a VPS tinha mais de um app no PM2 (chat-bot antigo + medbot).
+- Em alguns momentos, chat-bot ocupava porta 3000, causando conflito de deploy.
+- Houve falha nativa do better-sqlite3 na VPS (libnode/make/build tools), exigindo rebuild e/ou ferramentas de compilacao.
+- Dashboard local e producao foram confundidos em alguns momentos; no fim ficou claro:
+  - local estava bom
+  - producao estava com versao/estado inconsistente ate ajustar pull/restart/codigo
+- Erro SQL visto no terminal:
+  - SqliteError: no such column: "user"
+  - Indica uso incorreto de role="user" em vez de string literal adequada
+
+4) CORRECAO DE CODIGO CRITICA (METRICS)
+Arquivo alvo: src/routes/metrics.js
+
+Ponto critico:
+- Query de engajadas precisava evitar quebra por aspas no JavaScript e no SQL.
+
+Forma segura recomendada:
+engajadas: q("SELECT COUNT(DISTINCT c.id) as count FROM conversations c WHERE c.doctor_id=? AND (SELECT COUNT(*) FROM messages WHERE conversation_id=c.id AND role='user') > 1"),
+
+Observacao:
+- Evitar colocar SQL com role='user' dentro de string JS com aspas simples externas sem escape correto.
+
+5) SINAIS OPERACIONAIS NA VPS (VERIFICADOS)
+- PM2 ja mostrou:
+  - chat-bot: stopped
+  - medbot: online
+  - polymarket-copy-bot: online
+- Health endpoint retornou OK:
+  - {"status":"ok","uptime":...}
+- Logs ainda continham stacktrace antigo de metrics.js (erro historico).
+
+6) COMANDOS UTEIS DE OPERACAO (PRODUCAO)
+A) Atualizar codigo no servidor
+- cd /opt/medbot
+- git pull origin main
+- pm2 restart medbot
+
+B) Ver status/logs
+- pm2 list
+- pm2 logs medbot --lines 50 --nostream
+- curl -s http://localhost:3000/health
+
+C) Limpar logs antigos para nao confundir diagnostico
+- pm2 flush
+- pm2 restart medbot
+- pm2 logs medbot --lines 20 --nostream
+
+D) Se better-sqlite3 quebrar por build nativo
+- apt update && apt install -y build-essential python3-dev
+- cd /opt/medbot
+- npm rebuild better-sqlite3
+- pm2 restart medbot
+
+7) FLUXO RECOMENDADO DAQUI PRA FRENTE
+- Corrigir e validar localmente.
+- Commit e push para main.
+- Na VPS: pull + restart + health + logs.
+- So depois validar no navegador.
+
+8) CHECKLIST RAPIDO DE DEPLOY (PADRAO)
+1. git status limpo no desenvolvimento.
+2. git push origin main.
+3. VPS: git pull origin main.
+4. VPS: npm install (se dependencias mudarem).
+5. VPS: pm2 restart medbot.
+6. VPS: curl /health.
+7. VPS: testar /api/metrics/summary com token valido.
+8. Navegador: hard refresh.
+
+9) RISCOS/ATENCOES
+- Conflito de porta 3000 se outro processo subir na mesma porta.
+- Logs antigos podem mascarar situacao real atual.
+- Alteracao manual na VPS sem versionamento gera divergencia entre local e producao.
+- Evitar editar arquivo direto na VPS, preferir fluxo local -> GitHub -> pull.
+
+10) ESTADO ATUAL INFORMADO NA CONVERSA
+- Codigo foi ajustado e enviado para GitHub.
+- VPS fez pull e reinicio.
+- Health retornou OK.
+- Necessario apenas confirmar logs limpos e rotas de metrics respondendo com JSON apos restart limpo.
+
+11) TESTES RAPIDOS DE VALIDACAO FUNCIONAL
+- Login:
+  POST /api/auth/login
+- Dashboard data:
+  GET /api/metrics/summary
+  GET /api/metrics/recent
+- Conversas:
+  GET /api/conversations
+
+12) PROXIMOS PASSOS SUGERIDOS
+- Executar limpeza de logs e validar ausencia de erro novo.
+- Validar dashboard em producao com hard refresh.
+- Se ainda houver problema visual, tratar separadamente (UI/UX) sem misturar com erro de backend.
+
+FIM DO CONTEXTO.
