@@ -53,6 +53,8 @@ ANTHROPIC_API_KEY=sk-ant-api03-...    # Chave Anthropic
 JWT_SECRET=string-forte               # Segredo JWT
 PAGE_ACCESS_TOKEN=EAA...              # Token Instagram (depois de criar app no Meta)
 VERIFY_TOKEN=oftalmo2024              # Você escolhe
+IG_ACCOUNT_ID=1784...                 # ID da conta Instagram (opcional se page_id estiver no banco)
+DOCTOR_ID=dr-antonio                  # Doutor usado para fallback de page_id no banco
 PORT=3000
 ```
 
@@ -98,7 +100,20 @@ sudo certbot --nginx -d bot.dominio.com
    - URL: `https://bot.dominio.com/webhook`
    - Verify Token: mesmo do .env
    - Campo: `messages`
-5. Adicionar testers ou submeter App Review pra produção
+5. Ativar inscrição da conta no app (subscribed_apps):
+    - `npm run subscribe:webhook`
+    - Esperado: POST e GET de `/subscribed_apps` com sucesso
+6. Adicionar testers ou submeter App Review pra produção
+
+### Script de inscrição (subscribed_apps)
+
+Após deploy e configuração de variáveis, rode:
+
+```bash
+npm run subscribe:webhook
+```
+
+O script usa `IG_ACCOUNT_ID` (ou `INSTAGRAM_ACCOUNT_ID`). Se não existir, tenta ler `page_id` do doutor no `data.db` usando `DOCTOR_ID`.
 
 ## Login padrão
 
