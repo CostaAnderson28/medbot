@@ -55,9 +55,24 @@ function claudeLog(level, event, payload) {
   fn(`[Claude][${event}]`, payload);
 }
 
-function trimTextOutput(data) {
-  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  return String(text || '').trim();
+function extractClaudeText(data) {
+  const content = Array.isArray(data?.content) ? data.content : [];
+  const textFromBlocks = content
+    .filter(b => b && b.type === 'text' && typeof b.text === 'string')
+    .map(b => b.text)
+    .join('');
+
+  const outputText = typeof data?.output_text === 'string' ? data.output_text : '';
+  const legacyCompletion = typeof data?.completion === 'string' ? data.completion : '';
+
+  const rawText = textFromBlocks || outputText || legacyCompletion || '';
+  return {
+    rawText,
+    normalizedText: String(rawText).trim(),
+    source: textFromBlocks ? 'content.text' : (outputText ? 'output_text' : (legacyCompletion ? 'completion' : 'none')),
+    contentBlockTypes: content.map(b => b?.type || 'unknown'),
+    contentBlocks: content.length
+  };
 }
 
 app.use('/api/auth', authRoutes);
@@ -157,16 +172,19 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
         return null;
       }
 
-      const output = trimTextOutput(data);
-      if (!output) {
+      const extracted = extractClaudeText(data);
+      if (!extracted.normalizedText) {
         claudeLog('warn', 'empty_response', {
           ...reqCtx,
           attempt: attemptNo,
           maxAttempts,
           stopReason: data?.stop_reason || null,
           usage: data?.usage || null,
-          contentBlockTypes: Array.isArray(data?.content) ? data.content.map(b => b?.type || 'unknown') : [],
-          contentBlocks: Array.isArray(data?.content) ? data.content.length : 0
+          outputSource: extracted.source,
+          outputCharsRaw: extracted.rawText.length,
+          outputPreview: extracted.rawText.slice(0, 120),
+          contentBlockTypes: extracted.contentBlockTypes,
+          contentBlocks: extracted.contentBlocks
         });
         if (attempt < ANTHROPIC_RETRIES) {
           claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: 'empty_response' });
@@ -176,8 +194,8 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
         return null;
       }
 
-      claudeLog('info', 'attempt_success', { ...reqCtx, attempt: attemptNo, maxAttempts, outputChars: output.length });
-      return output;
+      claudeLog('info', 'attempt_success', { ...reqCtx, attempt: attemptNo, maxAttempts, outputChars: extracted.normalizedText.length, outputSource: extracted.source });
+      return extracted.normalizedText;
     } catch (error) {
       clearTimeout(timer);
       const timedOut = error?.name === 'AbortError';
