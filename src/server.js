@@ -26,7 +26,7 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || '';
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'meu_token_secreto';
 const PORT = process.env.PORT || 3000;
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
-const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 2);
+const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 3);
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 

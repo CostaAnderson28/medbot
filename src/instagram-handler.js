@@ -6,7 +6,7 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || '';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const profileCache = new Map();
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
-const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 2);
+const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 3);
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
@@ -317,10 +317,22 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     const reply = await callClaude(result.prompt, messages);
     
     if (!reply) {
-      const errorMsg = 'Tive uma dificuldade. Liga: ' + (result.doctor.phone || '(21) 2703-6100');
-      trackConversation(doctorId, senderId, 'assistant', errorMsg);
-      await sendInstagramResponse(senderId, errorMsg);
-      return errorMsg;
+      const waitMsg = 'Aguarde um momento... estou verificando aqui para te responder melhor.';
+      trackConversation(doctorId, senderId, 'assistant', waitMsg);
+      await sendInstagramResponse(senderId, waitMsg);
+
+      // Faz uma nova tentativa depois da mensagem de espera.
+      const retryReply = await callClaude(result.prompt, messages);
+      if (!retryReply) {
+        const finalFallback = 'Obrigada pela paciencia. Pode repetir sua pergunta, por favor?';
+        trackConversation(doctorId, senderId, 'assistant', finalFallback);
+        await sendInstagramResponse(senderId, finalFallback);
+        return finalFallback;
+      }
+
+      trackConversation(doctorId, senderId, 'assistant', retryReply);
+      await sendInstagramResponse(senderId, retryReply);
+      return retryReply;
     }
 
     // Salva resposta
