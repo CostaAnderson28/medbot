@@ -69,6 +69,52 @@ function buildReducedRecentMessages(messages) {
   return filtered.length ? filtered : messages;
 }
 
+function buildEssentialSystemPrompt(doctorId) {
+  const db = getDb();
+  try {
+    const doc = db.prepare('SELECT name,clinic,address,phone,whatsapp FROM doctors WHERE id=?').get(doctorId);
+    if (!doc) return null;
+
+    const schedules = db.prepare(
+      "SELECT day,morning_start,morning_end,afternoon_start,afternoon_end,location FROM schedules WHERE doctor_id=? ORDER BY CASE day WHEN 'segunda' THEN 1 WHEN 'terca' THEN 2 WHEN 'quarta' THEN 3 WHEN 'quinta' THEN 4 WHEN 'sexta' THEN 5 WHEN 'sabado' THEN 6 END"
+    ).all(doctorId);
+    const instructions = db.prepare('SELECT category,content FROM instructions WHERE doctor_id=? AND active=1').all(doctorId);
+
+    const byCat = {};
+    for (const i of instructions) {
+      if (!byCat[i.category]) byCat[i.category] = [];
+      byCat[i.category].push(i.content);
+    }
+
+    let p = `Voce e o proprio ${doc.name || 'doutor'} respondendo no Instagram da ${doc.clinic || 'clinica'} em ${doc.address || 'Niteroi'}.
+Fale em portugues do Brasil, de forma objetiva e acolhedora.
+Nunca use emojis, nunca use diminutivos, nunca invente informacoes.
+Se nao souber algo, direcione para consulta presencial sem mencionar IA.
+Telefone: ${doc.phone || ''}
+WhatsApp: ${doc.whatsapp || ''}
+`;
+
+    if (schedules.length) {
+      p += '\n## AGENDA\n';
+      for (const s of schedules) {
+        const parts = [];
+        if (s.morning_start && s.morning_end) parts.push(`manha ${s.morning_start}-${s.morning_end}`);
+        if (s.afternoon_start && s.afternoon_end) parts.push(`tarde ${s.afternoon_start}-${s.afternoon_end}`);
+        p += `- ${s.day}: ${parts.length ? parts.join(' | ') : 'nao atende'}${s.location ? ` (${s.location})` : ''}\n`;
+      }
+    }
+
+    if (byCat.procedimentos?.length) p += `\n## PROCEDIMENTOS\n${byCat.procedimentos.join('\n')}\n`;
+    if (byCat.agendamento?.length) p += `\n## AGENDAMENTO\n${byCat.agendamento.join('\n')}\n`;
+    if (byCat.convenios?.length) p += `\n## CONVENIOS\n${byCat.convenios.join('\n')}\n`;
+
+    p += '\nResponda sempre em 2 a 4 frases, com orientacao util e proximo passo claro.';
+    return p;
+  } finally {
+    db.close();
+  }
+}
+
 function getNowInSaoPaulo() {
   const now = new Date();
   const dateText = now.toLocaleDateString('pt-BR', {
@@ -444,6 +490,25 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     
     if (!reply) {
       console.warn('[Instagram][fallback_phase_1]', { traceId, doctorId, senderId, reason: 'all_reliable_attempts_failed' });
+      const essentialPrompt = buildEssentialSystemPrompt(doctorId);
+      if (essentialPrompt) {
+        console.warn('[Instagram][processed_recovery_start]', { traceId, doctorId, senderId });
+        const recovered = await callClaudeReliable(essentialPrompt, [{ role: 'user', content: String(messageText || '') }], {
+          channel: 'instagram',
+          doctorId,
+          senderId,
+          traceId,
+          phase: 'processed_recovery'
+        });
+
+        if (recovered) {
+          trackConversation(doctorId, senderId, 'assistant', recovered);
+          await sendInstagramResponse(senderId, recovered);
+          console.log('[Instagram][processed_recovery_success]', { traceId, doctorId, senderId, replyChars: recovered.length });
+          return recovered;
+        }
+      }
+
       const finalFallback = 'Obrigada pela paciencia. Pode repetir sua pergunta, por favor?';
       trackConversation(doctorId, senderId, 'assistant', finalFallback);
       await sendInstagramResponse(senderId, finalFallback);
