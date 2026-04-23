@@ -116,7 +116,26 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
       clearTimeout(timer);
 
       const raw = await res.text();
-      const data = safeJsonParse(raw) || {};
+      const parsed = safeJsonParse(raw);
+      if (!parsed) {
+        claudeLog('error', 'parse_error', {
+          ...reqCtx,
+          attempt: attemptNo,
+          maxAttempts,
+          status: res.status,
+          contentType: res.headers.get('content-type') || null,
+          rawLength: raw.length,
+          rawSample: raw.slice(0, 300)
+        });
+        if (attempt < ANTHROPIC_RETRIES) {
+          claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: 'parse_error' });
+          await delay(350 * (2 ** attempt));
+          continue;
+        }
+        return null;
+      }
+
+      const data = parsed;
       const apiError = data?.error || null;
 
       if (!res.ok || apiError) {
@@ -145,7 +164,9 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
           attempt: attemptNo,
           maxAttempts,
           stopReason: data?.stop_reason || null,
-          usage: data?.usage || null
+          usage: data?.usage || null,
+          contentBlockTypes: Array.isArray(data?.content) ? data.content.map(b => b?.type || 'unknown') : [],
+          contentBlocks: Array.isArray(data?.content) ? data.content.length : 0
         });
         if (attempt < ANTHROPIC_RETRIES) {
           claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: 'empty_response' });
