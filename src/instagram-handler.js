@@ -5,10 +5,33 @@ import { getDb } from './db/setup.js';
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || '';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
+function getNowInSaoPaulo() {
+  const now = new Date();
+  const dateText = now.toLocaleDateString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  });
+  const timeText = now.toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  return { dateText, timeText };
+}
+
+function buildTemporalSystemContext() {
+  const { dateText, timeText } = getNowInSaoPaulo();
+  return `## CONTEXTO TEMPORAL ATUAL\n- Data atual (America/Sao_Paulo): ${dateText}\n- Hora atual (America/Sao_Paulo): ${timeText}\n- Se perguntarem data ou hora, use exatamente este contexto e nao invente.`;
+}
+
 /**
  * Faz uma chamada para Claude (igual ao server.js)
  */
 async function callClaude(systemPrompt, messages) {
+  const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -19,7 +42,7 @@ async function callClaude(systemPrompt, messages) {
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 500,
-      system: systemPrompt,
+      system: systemWithTime,
       messages
     })
   });

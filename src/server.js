@@ -34,11 +34,34 @@ app.use('/api/settings', settingsRoutes);
 
 const conversationHistory = new Map();
 
+function getNowInSaoPaulo() {
+  const now = new Date();
+  const dateText = now.toLocaleDateString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  });
+  const timeText = now.toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  return { dateText, timeText };
+}
+
+function buildTemporalSystemContext() {
+  const { dateText, timeText } = getNowInSaoPaulo();
+  return `## CONTEXTO TEMPORAL ATUAL\n- Data atual (America/Sao_Paulo): ${dateText}\n- Hora atual (America/Sao_Paulo): ${timeText}\n- Se perguntarem data ou hora, use exatamente este contexto e nao invente.`;
+}
+
 async function callClaude(systemPrompt, messages) {
+  const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 500, system: systemPrompt, messages })
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 500, system: systemWithTime, messages })
   });
   const data = await res.json();
   if (data.error) { console.error('Claude error:', data.error); return null; }
@@ -74,6 +97,7 @@ function trackConversation(doctorId, senderId, role, content) {
 app.post('/api/chat', async (req, res) => {
   const { messages, doctorId } = req.body;
   if (!messages) return res.status(400).json({ error: 'Mensagens obrigatorias' });
+
   const id = doctorId || 'dr-antonio';
   const result = buildPrompt(id);
   if (!result) return res.status(404).json({ error: 'Doutor nao encontrado' });
