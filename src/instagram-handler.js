@@ -4,6 +4,29 @@ import { getDb } from './db/setup.js';
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || '';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const profileCache = new Map();
+const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
+const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 2);
+
+const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+function isRetryableAnthropicError(status, err) {
+  if (RETRYABLE_HTTP_STATUS.has(status)) return true;
+  const type = String(err?.type || '').toLowerCase();
+  return type.includes('rate_limit') || type.includes('overloaded') || type.includes('timeout');
+}
 
 function getNowInSaoPaulo() {
   const now = new Date();
@@ -27,37 +50,122 @@ function buildTemporalSystemContext() {
   return `## CONTEXTO TEMPORAL ATUAL\n- Data atual (America/Sao_Paulo): ${dateText}\n- Hora atual (America/Sao_Paulo): ${timeText}\n- Se perguntarem data ou hora, use exatamente este contexto e nao invente.`;
 }
 
+function pickBestDisplayName(profile) {
+  if (!profile) return null;
+  if (profile.name && String(profile.name).trim()) return String(profile.name).trim();
+  if (profile.username && String(profile.username).trim()) return `@${String(profile.username).trim()}`;
+  return null;
+}
+
+export async function fetchInstagramProfile(senderId) {
+  if (!senderId || !PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === 'preencher-depois') return null;
+
+  const cacheKey = String(senderId);
+  const cached = profileCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.ts) < 6 * 60 * 60 * 1000) return cached.value;
+
+  const urls = [
+    `https://graph.facebook.com/v18.0/${encodeURIComponent(senderId)}?fields=name,username&access_token=${encodeURIComponent(PAGE_ACCESS_TOKEN)}`,
+    `https://graph.instagram.com/v18.0/${encodeURIComponent(senderId)}?fields=name,username&access_token=${encodeURIComponent(PAGE_ACCESS_TOKEN)}`
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const value = {
+        name: data?.name ? String(data.name) : null,
+        username: data?.username ? String(data.username) : null
+      };
+      profileCache.set(cacheKey, { ts: now, value });
+      return value;
+    } catch (_) {
+      // Tentativa seguinte
+    }
+  }
+
+  profileCache.set(cacheKey, { ts: now, value: null });
+  return null;
+}
+
 /**
  * Faz uma chamada para Claude (igual ao server.js)
  */
 async function callClaude(systemPrompt, messages) {
   const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      system: systemWithTime,
-      messages
-    })
-  });
-  const data = await res.json();
-  if (data.error) {
-    console.error('Claude error:', data.error);
-    return null;
+
+  for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 500,
+          system: systemWithTime,
+          messages
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
+      const raw = await res.text();
+      const data = safeJsonParse(raw) || {};
+      const apiError = data?.error || null;
+
+      if (!res.ok || apiError) {
+        const requestId = res.headers.get('request-id') || res.headers.get('x-request-id') || null;
+        console.error('[Claude] API error', {
+          attempt: attempt + 1,
+          maxAttempts: ANTHROPIC_RETRIES + 1,
+          status: res.status,
+          requestId,
+          error: apiError || { message: raw.slice(0, 500) }
+        });
+
+        if (attempt < ANTHROPIC_RETRIES && isRetryableAnthropicError(res.status, apiError)) {
+          await delay(350 * (2 ** attempt));
+          continue;
+        }
+        return null;
+      }
+
+      return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    } catch (error) {
+      clearTimeout(timer);
+      const timedOut = error?.name === 'AbortError';
+      console.error('[Claude] Network error', {
+        attempt: attempt + 1,
+        maxAttempts: ANTHROPIC_RETRIES + 1,
+        timeoutMs: ANTHROPIC_TIMEOUT_MS,
+        timedOut,
+        message: error?.message
+      });
+
+      if (attempt < ANTHROPIC_RETRIES) {
+        await delay(350 * (2 ** attempt));
+        continue;
+      }
+      return null;
+    }
   }
-  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+
+  return null;
 }
 
 /**
  * Rastreia conversa no banco de dados (igual ao server.js)
  */
-function trackConversation(doctorId, senderId, role, content) {
+function trackConversation(doctorId, senderId, role, content, profile = null) {
   const db = getDb();
   let conv = db.prepare('SELECT * FROM conversations WHERE doctor_id=? AND sender_id=? ORDER BY started_at DESC LIMIT 1').get(doctorId, senderId);
   
@@ -75,7 +183,21 @@ function trackConversation(doctorId, senderId, role, content) {
     if (/urgencia/i.test(content)) extra += ',urgency=1';
   }
   
-  db.prepare("UPDATE conversations SET message_count=message_count+1,last_message_at=datetime('now')" + extra + " WHERE id=?").run(conv.id);
+  const displayName = pickBestDisplayName(profile);
+  const username = profile?.username && String(profile.username).trim() ? String(profile.username).trim() : null;
+  let profileSql = '';
+  const params = [];
+
+  if (displayName) {
+    profileSql += ', lead_name = ?';
+    params.push(displayName);
+  }
+  if (username) {
+    profileSql += ', instagram_username = ?';
+    params.push(username);
+  }
+
+  db.prepare("UPDATE conversations SET message_count=message_count+1,last_message_at=datetime('now')" + extra + profileSql + " WHERE id=?").run(...params, conv.id);
   db.close();
 }
 
@@ -167,8 +289,9 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
       return null;
     }
 
-    // Salva mensagem do usuário
-    trackConversation(doctorId, senderId, 'user', messageText);
+    // Salva mensagem do usuário com nome/username do perfil, quando disponível.
+    const profile = await fetchInstagramProfile(senderId);
+    trackConversation(doctorId, senderId, 'user', messageText, profile);
 
     // Busca prompt do médico
     const result = buildPrompt(doctorId);

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { setupDatabase, getDb } from './db/setup.js';
 import { buildPrompt } from './prompt-builder.js';
-import { parseInstagramMessage, handleInstagramMessage } from './instagram-handler.js';
+import { parseInstagramMessage, handleInstagramMessage, sendInstagramResponse, fetchInstagramProfile } from './instagram-handler.js';
 import { authMiddleware } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import scheduleRoutes from './routes/schedule.js';
@@ -25,6 +25,28 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || '';
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'meu_token_secreto';
 const PORT = process.env.PORT || 3000;
+const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
+const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 2);
+
+const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+function isRetryableAnthropicError(status, err) {
+  if (RETRYABLE_HTTP_STATUS.has(status)) return true;
+  const type = String(err?.type || '').toLowerCase();
+  return type.includes('rate_limit') || type.includes('overloaded') || type.includes('timeout');
+}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/schedule', scheduleRoutes);
@@ -58,14 +80,62 @@ function buildTemporalSystemContext() {
 
 async function callClaude(systemPrompt, messages) {
   const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 500, system: systemWithTime, messages })
-  });
-  const data = await res.json();
-  if (data.error) { console.error('Claude error:', data.error); return null; }
-  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+
+  for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 500, system: systemWithTime, messages }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
+      const raw = await res.text();
+      const data = safeJsonParse(raw) || {};
+      const apiError = data?.error || null;
+
+      if (!res.ok || apiError) {
+        const requestId = res.headers.get('request-id') || res.headers.get('x-request-id') || null;
+        console.error('[Claude] API error', {
+          attempt: attempt + 1,
+          maxAttempts: ANTHROPIC_RETRIES + 1,
+          status: res.status,
+          requestId,
+          error: apiError || { message: raw.slice(0, 500) }
+        });
+
+        if (attempt < ANTHROPIC_RETRIES && isRetryableAnthropicError(res.status, apiError)) {
+          await delay(350 * (2 ** attempt));
+          continue;
+        }
+        return null;
+      }
+
+      return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    } catch (error) {
+      clearTimeout(timer);
+      const timedOut = error?.name === 'AbortError';
+      console.error('[Claude] Network error', {
+        attempt: attempt + 1,
+        maxAttempts: ANTHROPIC_RETRIES + 1,
+        timeoutMs: ANTHROPIC_TIMEOUT_MS,
+        timedOut,
+        message: error?.message
+      });
+
+      if (attempt < ANTHROPIC_RETRIES) {
+        await delay(350 * (2 ** attempt));
+        continue;
+      }
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function findDoctorByPageId(pageId) {
@@ -175,7 +245,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 // Rota para buscar conversas reais do banco
-app.get('/api/conversations', authMiddleware, (req, res) => {
+app.get('/api/conversations', authMiddleware, async (req, res) => {
   const doctorId = req.doctor.id;
   const db = getDb();
 
@@ -190,10 +260,25 @@ app.get('/api/conversations', authMiddleware, (req, res) => {
       LIMIT 50
     `).all(doctorId);
 
+    // Tenta enriquecer nomes de conversas antigas ainda sem perfil salvo.
+    for (const conv of conversations) {
+      if ((conv.lead_name || conv.instagram_username) || !conv.sender_id) continue;
+      const profile = await fetchInstagramProfile(conv.sender_id);
+      const profileName = profile?.name ? String(profile.name).trim() : null;
+      const profileUsername = profile?.username ? String(profile.username).trim() : null;
+      if (!profileName && !profileUsername) continue;
+
+      db.prepare('UPDATE conversations SET lead_name=COALESCE(?, lead_name), instagram_username=COALESCE(?, instagram_username) WHERE id=?')
+        .run(profileName || null, profileUsername || null, conv.id);
+
+      if (!conv.lead_name && profileName) conv.lead_name = profileName;
+      if (!conv.instagram_username && profileUsername) conv.instagram_username = profileUsername;
+    }
+
     // Para cada conversa, busca as mensagens
     const result = conversations.map(conv => {
       const messages = db.prepare(`
-        SELECT role, content FROM messages 
+        SELECT role, content, created_at FROM messages 
         WHERE conversation_id=? 
         ORDER BY created_at ASC
       `).all(conv.id);
@@ -202,7 +287,7 @@ app.get('/api/conversations', authMiddleware, (req, res) => {
       const msgs = messages.map(m => ({
         r: m.role === 'user' ? 'u' : 'b',
         c: m.content,
-        t: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        t: new Date(m.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
       }));
 
       // Detecta status
@@ -213,8 +298,9 @@ app.get('/api/conversations', authMiddleware, (req, res) => {
 
       return {
         id: conv.id,
-        name: conv.lead_name || 'Cliente',
+        name: conv.lead_name || (conv.instagram_username ? '@' + conv.instagram_username : 'Cliente'),
         sender_id: conv.sender_id,
+        instagram_username: conv.instagram_username,
         phone: conv.lead_phone,
         conv: conv.lead_convenio,
         mot: messages.length > 0 ? messages[0].content.substring(0, 30) : 'Conversa',
@@ -231,6 +317,50 @@ app.get('/api/conversations', authMiddleware, (req, res) => {
     db.close();
     console.error('Error fetching conversations:', err);
     res.status(500).json({ error: 'Erro ao buscar conversas' });
+  }
+});
+
+app.post('/api/conversations/:id/manual-message', authMiddleware, async (req, res) => {
+  const doctorId = req.doctor?.id;
+  const conversationId = Number(req.params.id);
+  const text = String(req.body?.text || '').trim();
+
+  if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
+  if (!conversationId || conversationId < 1) return res.status(400).json({ error: 'Conversa invalida' });
+  if (!text) return res.status(400).json({ error: 'Mensagem vazia' });
+
+  const db = getDb();
+  try {
+    const conv = db.prepare('SELECT id, sender_id FROM conversations WHERE id=? AND doctor_id=?').get(conversationId, doctorId);
+    if (!conv) {
+      db.close();
+      return res.status(404).json({ error: 'Conversa nao encontrada' });
+    }
+    if (!conv.sender_id) {
+      db.close();
+      return res.status(400).json({ error: 'Conversa sem sender_id do Instagram' });
+    }
+
+    const sent = await sendInstagramResponse(conv.sender_id, text);
+    if (!sent) {
+      db.close();
+      return res.status(502).json({ error: 'Falha ao enviar mensagem para o Instagram' });
+    }
+
+    db.prepare('INSERT INTO messages (conversation_id,role,content) VALUES(?,?,?)').run(conversationId, 'assistant', text);
+
+    let extra = '';
+    if (text.includes('doclogos')) extra += ',link_sent=1';
+    if (/secretaria/i.test(text)) extra += ',whatsapp_redirect=1';
+    if (/urgencia/i.test(text)) extra += ',urgency=1';
+    db.prepare("UPDATE conversations SET message_count=message_count+1,last_message_at=datetime('now')" + extra + ' WHERE id=?').run(conversationId);
+
+    db.close();
+    return res.json({ ok: true });
+  } catch (err) {
+    db.close();
+    console.error('Erro ao enviar mensagem manual:', err);
+    return res.status(500).json({ error: 'Erro interno ao enviar mensagem' });
   }
 });
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));

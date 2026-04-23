@@ -37,10 +37,10 @@ router.get('/recent', (req, res) => {
   const db = getDb();
   const id = req.doctor?.id;
   if (!id) { db.close(); return res.status(401).json({ error: 'Não autenticado' }); }
-  const data = db.prepare("SELECT c.id,c.sender_id,c.started_at,c.message_count,c.link_sent,c.lead_name,c.lead_convenio,(SELECT content FROM messages WHERE conversation_id=c.id AND role='user' ORDER BY created_at LIMIT 1) as first_message FROM conversations c WHERE c.doctor_id=? ORDER BY c.started_at DESC LIMIT 20").all(id);
+  const data = db.prepare("SELECT c.id,c.sender_id,c.instagram_username,c.started_at,c.message_count,c.link_sent,c.lead_name,c.lead_convenio,(SELECT content FROM messages WHERE conversation_id=c.id AND role='user' ORDER BY created_at LIMIT 1) as first_message FROM conversations c WHERE c.doctor_id=? ORDER BY c.started_at DESC LIMIT 20").all(id);
   const r = data.map(c => ({
     ...c,
-    lead_name: c.lead_name || 'Cliente'
+    lead_name: c.lead_name || (c.instagram_username ? '@' + c.instagram_username : 'Cliente')
   }));
   db.close();
   res.json(r);

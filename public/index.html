@@ -61,6 +61,9 @@ body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-heigh
 .crm-card{background:#fff;border-radius:12px;padding:16px;border:1px solid #eee;margin-bottom:8px;cursor:pointer}
 .crm-card:hover{border-color:#3897f0}
 .crm-thread{background:#fafafa;border-radius:10px;padding:12px;max-height:280px;overflow-y:auto;margin-top:12px}
+.crm-compose{display:flex;gap:8px;margin-top:10px}
+.crm-compose input{flex:1;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:12px;outline:none;font-family:inherit}
+.crm-compose input:focus{border-color:#1e3a5f}
 .msg-row{display:flex;margin-bottom:6px;align-items:flex-start}
 .msg-row.u{justify-content:flex-end}.msg-row.b{justify-content:flex-start}
 .msg-av{width:22px;height:22px;border-radius:50%;margin-right:6px;background:linear-gradient(135deg,#1a3a5c,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:7px;font-weight:700;margin-top:2px;flex-shrink:0}
@@ -319,16 +322,37 @@ function renderCRM(){
   var q=(document.getElementById('crmSearch').value||'').toLowerCase();
   var data=crmData.slice();
   if(crmFilter!=='all')data=data.filter(function(d){return d.st===crmFilter});
-  if(q)data=data.filter(function(d){return(d.name+' '+d.mot+' '+(d.conv||'')).toLowerCase().includes(q)});
+  if(q)data=data.filter(function(d){return(d.name+' '+(d.instagram_username||'')+' '+d.mot+' '+(d.conv||'')).toLowerCase().includes(q)});
   document.getElementById('crmCount').textContent=data.length+' conversa'+(data.length!==1?'s':'');
   if(!data.length){document.getElementById('crmList').innerHTML='<div style="text-align:center;padding:40px;color:#aaa">Nenhuma conversa encontrada</div>';return}
   document.getElementById('crmList').innerHTML=data.map(function(ch){
     var st=stLabels[ch.st]||stLabels.sem;
     var clienteName=ch.name||'Cliente';
-    return '<div class="crm-card" onclick="toggleCrm('+ch.id+')"><div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#1e3a5f,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700">'+clienteName.charAt(0)+'</div><div><div style="font-size:13px;font-weight:600">'+clienteName+'</div><div style="font-size:11px;color:#888">'+ch.mot+(ch.conv?' — '+ch.conv:'')+(ch.phone?' — '+ch.phone:'')+'</div></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge" style="background:'+st[1]+';color:'+st[2]+'">'+st[0]+'</span><span style="font-size:11px;color:#aaa">'+ch.date+'</span></div></div><div id="crm-thread-'+ch.id+'" style="display:none" onclick="event.stopPropagation()"><div class="crm-thread">'+ch.msgs.map(function(m){var isU=m.r==='u';return '<div class="msg-row '+(isU?'u':'b')+'">'+(isU?'':'<div class="msg-av">DA</div>')+'<div><div class="msg-bub">'+m.c.replace(/(https?:\/\/[^\s]+)/g,'<a href="$1" target="_blank">$1</a>')+'</div><div class="msg-time" style="text-align:'+(isU?'right':'left')+'">'+m.t+'</div></div></div>'}).join('')+'</div></div></div>'
+    var username=(ch.instagram_username?' @'+ch.instagram_username:'');
+    var preview=escapeHtml(ch.mot||'Conversa')+(ch.conv?' — '+escapeHtml(ch.conv):'')+(ch.phone?' — '+escapeHtml(ch.phone):'');
+    var letter=escapeHtml(clienteName.charAt(0).toUpperCase()||'C');
+    var messagesHtml=ch.msgs.map(function(m){
+      var isU=m.r==='u';
+      return '<div class="msg-row '+(isU?'u':'b')+'">'+(isU?'':'<div class="msg-av">DA</div>')+'<div class="msg-col"><div class="msg-bub">'+formatMessageText(m.c)+'</div><div class="msg-time" style="text-align:'+(isU?'right':'left')+'">'+escapeHtml(m.t||'')+'</div></div></div>';
+    }).join('');
+    return '<div class="crm-card" onclick="toggleCrm('+ch.id+')"><div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#1e3a5f,#2a6a9f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700">'+letter+'</div><div><div style="font-size:13px;font-weight:600">'+escapeHtml(clienteName)+'<span style="font-size:11px;color:#888;font-weight:500">'+escapeHtml(username)+'</span></div><div style="font-size:11px;color:#888">'+preview+'</div></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge" style="background:'+st[1]+';color:'+st[2]+'">'+st[0]+'</span><span style="font-size:11px;color:#aaa">'+ch.date+'</span></div></div><div id="crm-thread-'+ch.id+'" style="display:none" onclick="event.stopPropagation()"><div class="crm-thread">'+messagesHtml+'</div><div class="crm-compose"><input id="crm-reply-'+ch.id+'" placeholder="Enviar mensagem manual" onclick="event.stopPropagation()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();sendManualMessage('+ch.id+')}"/><button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="event.stopPropagation();sendManualMessage('+ch.id+')">Enviar</button></div></div></div>'
   }).join('');
 }
 function toggleCrm(id){var el=document.getElementById('crm-thread-'+id);el.style.display=el.style.display==='none'?'block':'none'}
+
+async function sendManualMessage(conversationId){
+  var input=document.getElementById('crm-reply-'+conversationId);
+  if(!input)return;
+  var text=(input.value||'').trim();
+  if(!text){toast('Digite a mensagem antes de enviar');return}
+  input.disabled=true;
+  var res=await api('/conversations/'+conversationId+'/manual-message',{method:'POST',body:JSON.stringify({text:text})});
+  input.disabled=false;
+  if(!res||res.error){toast((res&&res.error)?res.error:'Falha ao enviar mensagem');return}
+  input.value='';
+  await loadCRM();
+  toast('Mensagem enviada');
+}
 
 async function loadSchedule(){
   var rows=await api('/schedule');if(!rows)return;

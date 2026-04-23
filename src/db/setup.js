@@ -56,6 +56,7 @@ export function setupDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       doctor_id TEXT NOT NULL,
       sender_id TEXT,
+      instagram_username TEXT,
       started_at TEXT DEFAULT (datetime('now')),
       last_message_at TEXT DEFAULT (datetime('now')),
       message_count INTEGER DEFAULT 0,
@@ -74,6 +75,12 @@ export function setupDatabase() {
       FOREIGN KEY (conversation_id) REFERENCES conversations(id)
     );
   `);
+
+  const convColumns = db.prepare("PRAGMA table_info(conversations)").all();
+  const hasInstagramUsername = convColumns.some(c => c.name === 'instagram_username');
+  if (!hasInstagramUsername) {
+    db.exec('ALTER TABLE conversations ADD COLUMN instagram_username TEXT');
+  }
 
   const exists = db.prepare('SELECT id FROM doctors WHERE id = ?').get('dr-antonio');
   if (!exists) {
