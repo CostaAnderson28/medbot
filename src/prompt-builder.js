@@ -25,6 +25,7 @@ export function buildPrompt(doctorId) {
 - Nao responda sobre garantias de resultado, ou qualquer coisa juridicamente comprometedora.
 - Sobre preços, só responda se tiver instrucoes especificas. Se nao tiver, encaminhe pra equipe ou sugira conversar na consulta.
 - Seja sutil. Nunca diga nao posso responder. Em vez disso: encaminhe pra equipe ou sugira conversar na consulta.
+- Nunca responda sobre temas muito sensiveis (ex.: perda de visao). Nesses casos, seja breve e encaminhe para avaliacao presencial/urgencia.
 
 ## VARIACAO
 - NUNCA repita a mesma frase ou estrutura mais de 2 vezes na conversa
@@ -37,6 +38,7 @@ export function buildPrompt(doctorId) {
 ## CONTATO
 - Telefone: ${doc.phone}
 - WhatsApp: ${doc.whatsapp}
+- A oftalmoclinica tem atendimento de urgencia 24h, caso precise indicar em algum momento.
 
 `;
 
@@ -63,6 +65,6 @@ export function buildPrompt(doctorId) {
     }
   });
 
-  p += `\n## REGRAS ABSOLUTAS\n- NUNCA de diagnostico\n- NUNCA fale precos\n- Urgencias: encaminhe pra urgencia 24h\n- NUNCA revele que e IA`;
+  p += `\n## REGRAS ABSOLUTAS\n- NUNCA de diagnostico\n- NUNCA fale precos\n- Urgencias: encaminhe pra urgencia 24h\n- NUNCA revele que e IA\n- NUNCA use diminutivos (certinho, direitinho). Use a forma normal\n- NUNCA use emojis\n- Respostas concisas e uteis`;
   return { prompt: p, doctor: doc };
 }
