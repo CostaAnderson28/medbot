@@ -27,6 +27,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'meu_token_secreto';
 const PORT = process.env.PORT || 3000;
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
 const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 3);
+const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
@@ -46,6 +47,17 @@ function isRetryableAnthropicError(status, err) {
   if (RETRYABLE_HTTP_STATUS.has(status)) return true;
   const type = String(err?.type || '').toLowerCase();
   return type.includes('rate_limit') || type.includes('overloaded') || type.includes('timeout');
+}
+
+function claudeLog(level, event, payload) {
+  if (level === 'info' && !DEBUG_CLAUDE) return;
+  const fn = level === 'error' ? console.error : (level === 'warn' ? console.warn : console.log);
+  fn(`[Claude][${event}]`, payload);
+}
+
+function trimTextOutput(data) {
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  return String(text || '').trim();
 }
 
 app.use('/api/auth', authRoutes);
@@ -78,12 +90,21 @@ function buildTemporalSystemContext() {
   return `## CONTEXTO TEMPORAL ATUAL\n- Data atual (America/Sao_Paulo): ${dateText}\n- Hora atual (America/Sao_Paulo): ${timeText}\n- Se perguntarem data ou hora, use exatamente este contexto e nao invente.`;
 }
 
-async function callClaude(systemPrompt, messages) {
+async function callClaude(systemPrompt, messages, ctx = {}) {
   const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
+  const reqCtx = {
+    channel: ctx.channel || 'api-chat',
+    doctorId: ctx.doctorId || null,
+    traceId: ctx.traceId || null,
+    phase: ctx.phase || 'default'
+  };
 
   for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
+    const attemptNo = attempt + 1;
+    const maxAttempts = ANTHROPIC_RETRIES + 1;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+    claudeLog('info', 'attempt_start', { ...reqCtx, attempt: attemptNo, maxAttempts, inputMessages: messages.length });
 
     try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -100,34 +121,56 @@ async function callClaude(systemPrompt, messages) {
 
       if (!res.ok || apiError) {
         const requestId = res.headers.get('request-id') || res.headers.get('x-request-id') || null;
-        console.error('[Claude] API error', {
-          attempt: attempt + 1,
-          maxAttempts: ANTHROPIC_RETRIES + 1,
+        claudeLog('error', 'api_error', {
+          ...reqCtx,
+          attempt: attemptNo,
+          maxAttempts,
           status: res.status,
           requestId,
           error: apiError || { message: raw.slice(0, 500) }
         });
 
         if (attempt < ANTHROPIC_RETRIES && isRetryableAnthropicError(res.status, apiError)) {
+          claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: 'api_error', status: res.status });
           await delay(350 * (2 ** attempt));
           continue;
         }
         return null;
       }
 
-      return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+      const output = trimTextOutput(data);
+      if (!output) {
+        claudeLog('warn', 'empty_response', {
+          ...reqCtx,
+          attempt: attemptNo,
+          maxAttempts,
+          stopReason: data?.stop_reason || null,
+          usage: data?.usage || null
+        });
+        if (attempt < ANTHROPIC_RETRIES) {
+          claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: 'empty_response' });
+          await delay(350 * (2 ** attempt));
+          continue;
+        }
+        return null;
+      }
+
+      claudeLog('info', 'attempt_success', { ...reqCtx, attempt: attemptNo, maxAttempts, outputChars: output.length });
+      return output;
     } catch (error) {
       clearTimeout(timer);
       const timedOut = error?.name === 'AbortError';
-      console.error('[Claude] Network error', {
-        attempt: attempt + 1,
-        maxAttempts: ANTHROPIC_RETRIES + 1,
+      claudeLog('error', 'network_error', {
+        ...reqCtx,
+        attempt: attemptNo,
+        maxAttempts,
         timeoutMs: ANTHROPIC_TIMEOUT_MS,
         timedOut,
         message: error?.message
       });
 
       if (attempt < ANTHROPIC_RETRIES) {
+        claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: timedOut ? 'timeout' : 'network_error' });
         await delay(350 * (2 ** attempt));
         continue;
       }
@@ -167,6 +210,7 @@ function trackConversation(doctorId, senderId, role, content) {
 app.post('/api/chat', async (req, res) => {
   const { messages, doctorId } = req.body;
   if (!messages) return res.status(400).json({ error: 'Mensagens obrigatorias' });
+  const traceId = `chat:${doctorId || 'dr-antonio'}:${Date.now()}`;
 
   const id = doctorId || 'dr-antonio';
   const result = buildPrompt(id);
@@ -182,7 +226,10 @@ app.post('/api/chat', async (req, res) => {
   const delay = isFirst ? dFirst : dMin + Math.floor(Math.random() * (dMax - dMin + 1));
   await new Promise(r => setTimeout(r, delay));
 
-  const reply = await callClaude(result.prompt, messages);
+  const reply = await callClaude(result.prompt, messages, { channel: 'api-chat', doctorId: id, traceId, phase: 'primary' });
+  if (!reply) {
+    console.warn('[API_CHAT][fallback]', { traceId, doctorId: id, reason: 'primary_call_failed' });
+  }
   res.json({ reply: reply || 'Tive um probleminha. Liga: ' + (result.doctor.phone || '(21) 2703-6100') });
 });
 

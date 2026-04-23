@@ -7,6 +7,7 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const profileCache = new Map();
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
 const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 3);
+const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
@@ -26,6 +27,17 @@ function isRetryableAnthropicError(status, err) {
   if (RETRYABLE_HTTP_STATUS.has(status)) return true;
   const type = String(err?.type || '').toLowerCase();
   return type.includes('rate_limit') || type.includes('overloaded') || type.includes('timeout');
+}
+
+function claudeLog(level, event, payload) {
+  if (level === 'info' && !DEBUG_CLAUDE) return;
+  const fn = level === 'error' ? console.error : (level === 'warn' ? console.warn : console.log);
+  fn(`[Claude][${event}]`, payload);
+}
+
+function trimTextOutput(data) {
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  return String(text || '').trim();
 }
 
 function getNowInSaoPaulo() {
@@ -93,12 +105,22 @@ export async function fetchInstagramProfile(senderId) {
 /**
  * Faz uma chamada para Claude (igual ao server.js)
  */
-async function callClaude(systemPrompt, messages) {
+async function callClaude(systemPrompt, messages, ctx = {}) {
   const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
+  const reqCtx = {
+    channel: ctx.channel || 'instagram',
+    doctorId: ctx.doctorId || null,
+    senderId: ctx.senderId || null,
+    traceId: ctx.traceId || null,
+    phase: ctx.phase || 'default'
+  };
 
   for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
+    const attemptNo = attempt + 1;
+    const maxAttempts = ANTHROPIC_RETRIES + 1;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+    claudeLog('info', 'attempt_start', { ...reqCtx, attempt: attemptNo, maxAttempts, inputMessages: messages.length });
 
     try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -124,34 +146,56 @@ async function callClaude(systemPrompt, messages) {
 
       if (!res.ok || apiError) {
         const requestId = res.headers.get('request-id') || res.headers.get('x-request-id') || null;
-        console.error('[Claude] API error', {
-          attempt: attempt + 1,
-          maxAttempts: ANTHROPIC_RETRIES + 1,
+        claudeLog('error', 'api_error', {
+          ...reqCtx,
+          attempt: attemptNo,
+          maxAttempts,
           status: res.status,
           requestId,
           error: apiError || { message: raw.slice(0, 500) }
         });
 
         if (attempt < ANTHROPIC_RETRIES && isRetryableAnthropicError(res.status, apiError)) {
+          claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: 'api_error', status: res.status });
           await delay(350 * (2 ** attempt));
           continue;
         }
         return null;
       }
 
-      return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+      const output = trimTextOutput(data);
+      if (!output) {
+        claudeLog('warn', 'empty_response', {
+          ...reqCtx,
+          attempt: attemptNo,
+          maxAttempts,
+          stopReason: data?.stop_reason || null,
+          usage: data?.usage || null
+        });
+        if (attempt < ANTHROPIC_RETRIES) {
+          claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: 'empty_response' });
+          await delay(350 * (2 ** attempt));
+          continue;
+        }
+        return null;
+      }
+
+      claudeLog('info', 'attempt_success', { ...reqCtx, attempt: attemptNo, maxAttempts, outputChars: output.length });
+      return output;
     } catch (error) {
       clearTimeout(timer);
       const timedOut = error?.name === 'AbortError';
-      console.error('[Claude] Network error', {
-        attempt: attempt + 1,
-        maxAttempts: ANTHROPIC_RETRIES + 1,
+      claudeLog('error', 'network_error', {
+        ...reqCtx,
+        attempt: attemptNo,
+        maxAttempts,
         timeoutMs: ANTHROPIC_TIMEOUT_MS,
         timedOut,
         message: error?.message
       });
 
       if (attempt < ANTHROPIC_RETRIES) {
+        claudeLog('warn', 'retry_scheduled', { ...reqCtx, attempt: attemptNo, reason: timedOut ? 'timeout' : 'network_error' });
         await delay(350 * (2 ** attempt));
         continue;
       }
@@ -292,6 +336,8 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     // Salva mensagem do usuário com nome/username do perfil, quando disponível.
     const profile = await fetchInstagramProfile(senderId);
     trackConversation(doctorId, senderId, 'user', messageText, profile);
+    const traceId = `${doctorId}:${senderId}:${Date.now()}`;
+    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, userChars: String(messageText || '').length });
 
     // Busca prompt do médico
     const result = buildPrompt(doctorId);
@@ -314,16 +360,18 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     db.close();
 
     // Chama Claude
-    const reply = await callClaude(result.prompt, messages);
+    const reply = await callClaude(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });
     
     if (!reply) {
+      console.warn('[Instagram][fallback_phase_1]', { traceId, doctorId, senderId, reason: 'primary_call_failed' });
       const waitMsg = 'Aguarde um momento... estou verificando aqui para te responder melhor.';
       trackConversation(doctorId, senderId, 'assistant', waitMsg);
       await sendInstagramResponse(senderId, waitMsg);
 
       // Faz uma nova tentativa depois da mensagem de espera.
-      const retryReply = await callClaude(result.prompt, messages);
+      const retryReply = await callClaude(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'post_wait_retry' });
       if (!retryReply) {
+        console.warn('[Instagram][fallback_phase_2]', { traceId, doctorId, senderId, reason: 'retry_after_wait_failed' });
         const finalFallback = 'Obrigada pela paciencia. Pode repetir sua pergunta, por favor?';
         trackConversation(doctorId, senderId, 'assistant', finalFallback);
         await sendInstagramResponse(senderId, finalFallback);
@@ -332,6 +380,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
 
       trackConversation(doctorId, senderId, 'assistant', retryReply);
       await sendInstagramResponse(senderId, retryReply);
+      console.log('[Instagram][outbound_retry_success]', { traceId, doctorId, senderId, replyChars: retryReply.length });
       return retryReply;
     }
 
@@ -341,7 +390,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     // Envia pro Instagram
     await sendInstagramResponse(senderId, reply);
 
-    console.log(`[Instagram] ${doctorId} respondeu a ${senderId}`);
+    console.log('[Instagram][outbound_success]', { traceId, doctorId, senderId, replyChars: reply.length });
     return reply;
   } catch (error) {
     console.error('Error handling Instagram message:', error);
