@@ -27,6 +27,9 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'meu_token_secreto';
 const PORT = process.env.PORT || 3000;
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
 const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 3);
+const ANTHROPIC_MODEL_PRIMARY = process.env.ANTHROPIC_MODEL_PRIMARY || 'claude-sonnet-4-20250514';
+const ANTHROPIC_MODEL_FALLBACK = process.env.ANTHROPIC_MODEL_FALLBACK || 'claude-3-5-haiku-20241022';
+const ANTHROPIC_ENABLE_MODEL_FALLBACK = process.env.ANTHROPIC_ENABLE_MODEL_FALLBACK !== '0';
 const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
@@ -75,6 +78,17 @@ function extractClaudeText(data) {
   };
 }
 
+function buildReducedRecentMessages(messages) {
+  if (!Array.isArray(messages) || !messages.length) return messages;
+
+  const filtered = messages
+    .filter(m => (m?.role === 'user' || m?.role === 'assistant') && typeof m?.content === 'string')
+    .slice(-8)
+    .map(m => ({ role: m.role, content: String(m.content).slice(0, 1200) }));
+
+  return filtered.length ? filtered : messages;
+}
+
 app.use('/api/auth', authRoutes);
 app.use('/api/schedule', scheduleRoutes);
 app.use('/api/instructions', instructionsRoutes);
@@ -107,11 +121,13 @@ function buildTemporalSystemContext() {
 
 async function callClaude(systemPrompt, messages, ctx = {}) {
   const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
+  const model = ctx.model || ANTHROPIC_MODEL_PRIMARY;
   const reqCtx = {
     channel: ctx.channel || 'api-chat',
     doctorId: ctx.doctorId || null,
     traceId: ctx.traceId || null,
-    phase: ctx.phase || 'default'
+    phase: ctx.phase || 'default',
+    model
   };
 
   for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
@@ -125,7 +141,7 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 500, system: systemWithTime, messages }),
+        body: JSON.stringify({ model, max_tokens: 500, system: systemWithTime, messages }),
         signal: controller.signal
       });
       clearTimeout(timer);
@@ -220,6 +236,31 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
   return null;
 }
 
+async function callClaudeReliable(systemPrompt, messages, ctx = {}) {
+  const models = [ANTHROPIC_MODEL_PRIMARY];
+  if (ANTHROPIC_ENABLE_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK !== ANTHROPIC_MODEL_PRIMARY) {
+    models.push(ANTHROPIC_MODEL_FALLBACK);
+  }
+
+  const variants = [
+    { name: 'full_context', messages },
+    { name: 'reduced_recent_context', messages: buildReducedRecentMessages(messages) }
+  ];
+
+  for (const model of models) {
+    for (const variant of variants) {
+      const reply = await callClaude(systemPrompt, variant.messages, {
+        ...ctx,
+        model,
+        phase: `${ctx.phase || 'default'}:${variant.name}`
+      });
+      if (reply) return reply;
+    }
+  }
+
+  return null;
+}
+
 function findDoctorByPageId(pageId) {
   const db = getDb();
   const doc = db.prepare('SELECT id FROM doctors WHERE page_id=? AND bot_active=1').get(pageId);
@@ -265,7 +306,7 @@ app.post('/api/chat', async (req, res) => {
   const delay = isFirst ? dFirst : dMin + Math.floor(Math.random() * (dMax - dMin + 1));
   await new Promise(r => setTimeout(r, delay));
 
-  const reply = await callClaude(result.prompt, messages, { channel: 'api-chat', doctorId: id, traceId, phase: 'primary' });
+  const reply = await callClaudeReliable(result.prompt, messages, { channel: 'api-chat', doctorId: id, traceId, phase: 'primary' });
   if (!reply) {
     console.warn('[API_CHAT][fallback]', { traceId, doctorId: id, reason: 'primary_call_failed' });
   }

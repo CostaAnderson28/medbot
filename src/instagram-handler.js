@@ -7,6 +7,9 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const profileCache = new Map();
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
 const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 3);
+const ANTHROPIC_MODEL_PRIMARY = process.env.ANTHROPIC_MODEL_PRIMARY || 'claude-sonnet-4-20250514';
+const ANTHROPIC_MODEL_FALLBACK = process.env.ANTHROPIC_MODEL_FALLBACK || 'claude-3-5-haiku-20241022';
+const ANTHROPIC_ENABLE_MODEL_FALLBACK = process.env.ANTHROPIC_ENABLE_MODEL_FALLBACK !== '0';
 const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
@@ -53,6 +56,17 @@ function extractClaudeText(data) {
     contentBlockTypes: content.map(b => b?.type || 'unknown'),
     contentBlocks: content.length
   };
+}
+
+function buildReducedRecentMessages(messages) {
+  if (!Array.isArray(messages) || !messages.length) return messages;
+
+  const filtered = messages
+    .filter(m => (m?.role === 'user' || m?.role === 'assistant') && typeof m?.content === 'string')
+    .slice(-8)
+    .map(m => ({ role: m.role, content: String(m.content).slice(0, 1200) }));
+
+  return filtered.length ? filtered : messages;
 }
 
 function getNowInSaoPaulo() {
@@ -122,12 +136,14 @@ export async function fetchInstagramProfile(senderId) {
  */
 async function callClaude(systemPrompt, messages, ctx = {}) {
   const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
+  const model = ctx.model || ANTHROPIC_MODEL_PRIMARY;
   const reqCtx = {
     channel: ctx.channel || 'instagram',
     doctorId: ctx.doctorId || null,
     senderId: ctx.senderId || null,
     traceId: ctx.traceId || null,
-    phase: ctx.phase || 'default'
+    phase: ctx.phase || 'default',
+    model
   };
 
   for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
@@ -146,7 +162,7 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model,
           max_tokens: 500,
           system: systemWithTime,
           messages
@@ -239,6 +255,31 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
         continue;
       }
       return null;
+    }
+  }
+
+  return null;
+}
+
+async function callClaudeReliable(systemPrompt, messages, ctx = {}) {
+  const models = [ANTHROPIC_MODEL_PRIMARY];
+  if (ANTHROPIC_ENABLE_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK !== ANTHROPIC_MODEL_PRIMARY) {
+    models.push(ANTHROPIC_MODEL_FALLBACK);
+  }
+
+  const variants = [
+    { name: 'full_context', messages },
+    { name: 'reduced_recent_context', messages: buildReducedRecentMessages(messages) }
+  ];
+
+  for (const model of models) {
+    for (const variant of variants) {
+      const reply = await callClaude(systemPrompt, variant.messages, {
+        ...ctx,
+        model,
+        phase: `${ctx.phase || 'default'}:${variant.name}`
+      });
+      if (reply) return reply;
     }
   }
 
@@ -399,51 +440,14 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     db.close();
 
     // Chama Claude
-    const reply = await callClaude(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });
+    const reply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });
     
     if (!reply) {
-      console.warn('[Instagram][fallback_phase_1]', { traceId, doctorId, senderId, reason: 'primary_call_failed' });
-      const waitMsg = 'Aguarde um momento... estou verificando aqui para te responder melhor.';
-      trackConversation(doctorId, senderId, 'assistant', waitMsg);
-      await sendInstagramResponse(senderId, waitMsg);
-
-      // Faz uma nova tentativa depois da mensagem de espera.
-      const retryReply = await callClaude(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'post_wait_retry' });
-      if (!retryReply) {
-        console.warn('[Instagram][fallback_phase_2]', { traceId, doctorId, senderId, reason: 'retry_after_wait_failed' });
-
-        // Ultima tentativa com contexto minimo para contornar respostas vazias recorrentes.
-        const rescueMessages = [
-          {
-            role: 'user',
-            content: `Pergunta do paciente: ${messageText}\nResponda em portugues do Brasil, de forma objetiva, em no maximo 2 frases.`
-          }
-        ];
-        const rescueReply = await callClaude(result.prompt, rescueMessages, {
-          channel: 'instagram',
-          doctorId,
-          senderId,
-          traceId,
-          phase: 'rescue_minimal_context'
-        });
-
-        if (rescueReply) {
-          trackConversation(doctorId, senderId, 'assistant', rescueReply);
-          await sendInstagramResponse(senderId, rescueReply);
-          console.log('[Instagram][outbound_rescue_success]', { traceId, doctorId, senderId, replyChars: rescueReply.length });
-          return rescueReply;
-        }
-
-        const finalFallback = 'Obrigada pela paciencia. Pode repetir sua pergunta, por favor?';
-        trackConversation(doctorId, senderId, 'assistant', finalFallback);
-        await sendInstagramResponse(senderId, finalFallback);
-        return finalFallback;
-      }
-
-      trackConversation(doctorId, senderId, 'assistant', retryReply);
-      await sendInstagramResponse(senderId, retryReply);
-      console.log('[Instagram][outbound_retry_success]', { traceId, doctorId, senderId, replyChars: retryReply.length });
-      return retryReply;
+      console.warn('[Instagram][fallback_phase_1]', { traceId, doctorId, senderId, reason: 'all_reliable_attempts_failed' });
+      const finalFallback = 'Obrigada pela paciencia. Pode repetir sua pergunta, por favor?';
+      trackConversation(doctorId, senderId, 'assistant', finalFallback);
+      await sendInstagramResponse(senderId, finalFallback);
+      return finalFallback;
     }
 
     // Salva resposta
