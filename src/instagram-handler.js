@@ -459,11 +459,14 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
       return null;
     }
 
-    // Salva mensagem do usuário com nome/username do perfil, quando disponível.
-    const profile = await fetchInstagramProfile(senderId);
-    trackConversation(doctorId, senderId, 'user', messageText, profile);
+    const userMessage = String(messageText || '').trim();
+    if (!userMessage) {
+      console.error('Empty user message after normalization');
+      return null;
+    }
+
     const traceId = `${doctorId}:${senderId}:${Date.now()}`;
-    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, userChars: String(messageText || '').length });
+    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, userChars: userMessage.length });
 
     // Busca prompt do médico
     const result = buildPrompt(doctorId);
@@ -474,16 +477,41 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
       return errorMsg;
     }
 
-    // Busca histórico de mensagens
+    // Busca histórico de mensagens antes de salvar a atual para evitar duplicidade.
     const db = getDb();
     const conv = db.prepare('SELECT id FROM conversations WHERE doctor_id=? AND sender_id=? ORDER BY started_at DESC LIMIT 1').get(doctorId, senderId);
     
     let messages = [];
     if (conv) {
       const history = db.prepare('SELECT role, content FROM messages WHERE conversation_id=? ORDER BY created_at ASC LIMIT 10').all(conv.id);
-      messages = history.map(m => ({ role: m.role, content: m.content }));
+      messages = history
+        .map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : String(m.content || '') }))
+        .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 0);
     }
     db.close();
+
+    // Adiciona a mensagem atual manualmente no payload para o Claude.
+    messages.push({ role: 'user', content: userMessage });
+
+    // Persiste a mensagem atual do usuário depois da montagem do payload.
+    const profile = await fetchInstagramProfile(senderId);
+    trackConversation(doctorId, senderId, 'user', userMessage, profile);
+
+    claudeLog('info', 'payload_debug', {
+      channel: 'instagram',
+      doctorId,
+      senderId,
+      traceId,
+      messagesCount: messages.length,
+      lastTwoRoles: messages.slice(-2).map(m => m.role),
+      hasConsecutiveUser: messages.some((m, i) => i > 0 && m.role === 'user' && messages[i - 1]?.role === 'user'),
+      messagesPreview: messages.map((m, i) => ({
+        index: i,
+        role: m.role,
+        chars: m.content.length,
+        preview: m.content.slice(0, 60)
+      }))
+    });
 
     // Chama Claude
     const reply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });

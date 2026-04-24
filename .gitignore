@@ -1,6 +1,7 @@
 .env
 .env.local
 .env.bak-2026-04-10-1011
+docs
 
 # Dependencies
 node_modules/
