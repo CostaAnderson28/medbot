@@ -11,6 +11,8 @@ const ANTHROPIC_MODEL_PRIMARY = process.env.ANTHROPIC_MODEL_PRIMARY || 'claude-s
 const ANTHROPIC_MODEL_FALLBACK = process.env.ANTHROPIC_MODEL_FALLBACK || 'claude-3-5-haiku-20241022';
 const ANTHROPIC_ENABLE_MODEL_FALLBACK = process.env.ANTHROPIC_ENABLE_MODEL_FALLBACK !== '0';
 const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
+const MAX_REPLY_SENTENCES = Number(process.env.MAX_REPLY_SENTENCES || 3);
+const MAX_REPLY_CHARS = Number(process.env.MAX_REPLY_CHARS || 360);
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
@@ -142,6 +144,130 @@ function pickBestDisplayName(profile) {
   if (profile.name && String(profile.name).trim()) return String(profile.name).trim();
   if (profile.username && String(profile.username).trim()) return `@${String(profile.username).trim()}`;
   return null;
+}
+
+function isGreetingOnlyMessage(text) {
+  const raw = String(text || '').trim().toLowerCase();
+  if (!raw) return false;
+  const normalized = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  const greetingPattern = /^(oi|ola|bom dia|boa tarde|boa noite|e ai|fala|opa|tudo bem|tudo bom|bom dia dr|boa tarde dr|boa noite dr)$/;
+  return greetingPattern.test(normalized);
+}
+
+function normalizeText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s:/.-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasAnyKeyword(text, keywords) {
+  const n = normalizeText(text);
+  return keywords.some(k => n.includes(k));
+}
+
+function findMatchedKeywords(text, keywords) {
+  const n = normalizeText(text);
+  return keywords.filter(k => n.includes(k));
+}
+
+function shouldKeepCta({ userMessage = '', messages = [] } = {}) {
+  const user = String(userMessage || '');
+  const recentUserText = (Array.isArray(messages) ? messages : [])
+    .filter(m => m?.role === 'user' && typeof m?.content === 'string')
+    .slice(-3)
+    .map(m => m.content)
+    .join(' ');
+  const combinedUserIntent = `${recentUserText} ${user}`;
+
+  const schedulingIntent = [
+    'agendar', 'agendamento', 'consulta', 'marcar', 'agenda', 'horario', 'horarios', 'disponivel',
+    'disponibilidade', 'exame', 'retorno', 'link', 'whatsapp', 'telefone', 'contato', 'endereco',
+    'onde atende', 'valor', 'preco', 'precos', 'convenio'
+  ];
+
+  const matchedKeywords = findMatchedKeywords(combinedUserIntent, schedulingIntent);
+  return {
+    keep: matchedKeywords.length > 0,
+    matchedKeywords,
+    recentUserPreview: normalizeText(combinedUserIntent).slice(0, 160)
+  };
+}
+
+function stripIrrelevantCta(text) {
+  const ctaSignals = [
+    'agendar', 'agendamento', 'marcar', 'consulta', 'link', 'whatsapp', 'telefone', 'fale com a equipe',
+    'secretaria', 'entre em contato', 'doclogos.com', 'chama no whatsapp', 'ligar para'
+  ];
+
+  const chunks = String(text || '')
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const filtered = chunks.filter(s => !hasAnyKeyword(s, ctaSignals));
+  if (filtered.length) return filtered.join(' ').trim();
+
+  // Se tudo era CTA, mantem o texto original para nao retornar vazio.
+  return String(text || '').trim();
+}
+
+function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', messages = [], logContext = {} } = {}) {
+  let text = String(reply || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+
+  if (isGreetingOnlyMessage(userMessage)) {
+    const doc = String(doctorName || '').trim();
+    if (doc) return `Bom dia! Sou o ${doc}. Como posso te ajudar hoje?`;
+    return 'Bom dia! Como posso te ajudar hoje?';
+  }
+
+  // Evita alegacoes pessoais de experiencia nao verificavel.
+  text = text.replace(
+    /\b(ja|já)\s+operei\b[^.?!]*(\.|\?|!|$)/gi,
+    'Cada caso precisa ser avaliado individualmente em consulta. '
+  );
+
+  const ctaDecision = shouldKeepCta({ userMessage, messages });
+  claudeLog('info', 'cta_decision', {
+    channel: logContext.channel || 'instagram',
+    doctorId: logContext.doctorId || null,
+    senderId: logContext.senderId || null,
+    traceId: logContext.traceId || null,
+    keepCta: ctaDecision.keep,
+    matchedKeywords: ctaDecision.matchedKeywords,
+    userPreview: ctaDecision.recentUserPreview
+  });
+
+  if (!ctaDecision.keep) {
+    text = stripIrrelevantCta(text);
+  }
+
+  const sentenceChunks = text
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if (sentenceChunks.length > MAX_REPLY_SENTENCES) {
+    text = sentenceChunks.slice(0, MAX_REPLY_SENTENCES).join(' ').trim();
+  }
+
+  if (text.length > MAX_REPLY_CHARS) {
+    const clipped = text.slice(0, MAX_REPLY_CHARS);
+    const breakAt = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('? '), clipped.lastIndexOf('! '));
+    text = (breakAt > 80 ? clipped.slice(0, breakAt + 1) : clipped).trim();
+  }
+
+  return text;
 }
 
 export async function fetchInstagramProfile(senderId) {
@@ -477,6 +603,18 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
       return errorMsg;
     }
 
+    const isGreetingOnly = isGreetingOnlyMessage(userMessage);
+    if (isGreetingOnly) {
+      const greetingReply = sanitizeAssistantReply('', {
+        userMessage,
+        doctorName: result?.doctor?.name || ''
+      });
+      trackConversation(doctorId, senderId, 'assistant', greetingReply);
+      await sendInstagramResponse(senderId, greetingReply);
+      console.log('[Instagram][greeting_short_reply]', { traceId, doctorId, senderId, replyChars: greetingReply.length });
+      return greetingReply;
+    }
+
     // Busca histórico de mensagens antes de salvar a atual para evitar duplicidade.
     const db = getDb();
     const conv = db.prepare('SELECT id FROM conversations WHERE doctor_id=? AND sender_id=? ORDER BY started_at DESC LIMIT 1').get(doctorId, senderId);
@@ -514,19 +652,31 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     });
 
     // Chama Claude
-    const reply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });
+    const rawReply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });
+    const reply = sanitizeAssistantReply(rawReply, {
+      userMessage,
+      doctorName: result?.doctor?.name || '',
+      messages,
+      logContext: { channel: 'instagram', doctorId, senderId, traceId }
+    });
     
     if (!reply) {
       console.warn('[Instagram][fallback_phase_1]', { traceId, doctorId, senderId, reason: 'all_reliable_attempts_failed' });
       const essentialPrompt = buildEssentialSystemPrompt(doctorId);
       if (essentialPrompt) {
         console.warn('[Instagram][processed_recovery_start]', { traceId, doctorId, senderId });
-        const recovered = await callClaudeReliable(essentialPrompt, [{ role: 'user', content: String(messageText || '') }], {
+        const recoveredRaw = await callClaudeReliable(essentialPrompt, [{ role: 'user', content: String(messageText || '') }], {
           channel: 'instagram',
           doctorId,
           senderId,
           traceId,
           phase: 'processed_recovery'
+        });
+        const recovered = sanitizeAssistantReply(recoveredRaw, {
+          userMessage,
+          doctorName: result?.doctor?.name || '',
+          messages,
+          logContext: { channel: 'instagram', doctorId, senderId, traceId }
         });
 
         if (recovered) {
