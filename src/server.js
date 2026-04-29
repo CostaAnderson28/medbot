@@ -55,7 +55,9 @@ function isRetryableAnthropicError(status, err) {
 function claudeLog(level, event, payload) {
   if (level === 'info' && !DEBUG_CLAUDE) return;
   const fn = level === 'error' ? console.error : (level === 'warn' ? console.warn : console.log);
-  fn(`[Claude][${event}]`, payload);
+  const timeCtx = getLogTimeContext();
+  const fullPayload = payload && typeof payload === 'object' ? { ...payload, ...timeCtx } : { payload, ...timeCtx };
+  fn(`[Claude][${event}]`, fullPayload);
 }
 
 function extractClaudeText(data) {
@@ -89,6 +91,25 @@ function buildReducedRecentMessages(messages) {
   return filtered.length ? filtered : messages;
 }
 
+function shouldDropTemporalAssistantMessage(message) {
+  if (!message || message.role !== 'assistant' || typeof message.content !== 'string') return false;
+  const text = message.content.toLowerCase();
+  if (text.includes('contexto temporal atual')) return true;
+  const temporalPattern = /(\b(hoje|amanha|amanhã|ontem)\b)|(\b\d{1,2}\/\d{1,2}\/\d{2,4}\b)|(\b\d{1,2}\s+de\s+[a-z]+\b)/i;
+  return temporalPattern.test(text);
+}
+
+function stripTemporalAssistantHistory(messages) {
+  if (!Array.isArray(messages) || !messages.length) return { messages, removed: 0 };
+  let removed = 0;
+  const filtered = messages.filter(m => {
+    const drop = shouldDropTemporalAssistantMessage(m);
+    if (drop) removed += 1;
+    return !drop;
+  });
+  return { messages: filtered, removed };
+}
+
 app.use('/api/auth', authRoutes);
 app.use('/api/schedule', scheduleRoutes);
 app.use('/api/instructions', instructionsRoutes);
@@ -114,9 +135,22 @@ function getNowInSaoPaulo() {
   return { dateText, timeText };
 }
 
+function getLogTimeContext() {
+  const { dateText, timeText } = getNowInSaoPaulo();
+  return { logTimeIso: new Date().toISOString(), spDateText: dateText, spTimeText: timeText };
+}
+
 function buildTemporalSystemContext() {
   const { dateText, timeText } = getNowInSaoPaulo();
   return `## CONTEXTO TEMPORAL ATUAL\n- Data atual (America/Sao_Paulo): ${dateText}\n- Hora atual (America/Sao_Paulo): ${timeText}\n- Se perguntarem data ou hora, use exatamente este contexto e nao invente.`;
+}
+
+function buildTemporalReminderMessage() {
+  const { dateText, timeText } = getNowInSaoPaulo();
+  return {
+    role: 'user',
+    content: `[Sistema: A data e hora atual e ${dateText} ${timeText} (America/Sao_Paulo). Ignore qualquer data mencionada no historico e responda com base apenas nesta data atual.]`
+  };
 }
 
 async function callClaude(systemPrompt, messages, ctx = {}) {
@@ -261,11 +295,11 @@ async function callClaudeReliable(systemPrompt, messages, ctx = {}) {
   return null;
 }
 
-function findDoctorByPageId(pageId) {
+function findDoctorStatusByPageId(pageId) {
   const db = getDb();
-  const doc = db.prepare('SELECT id FROM doctors WHERE page_id=? AND bot_active=1').get(pageId);
+  const doc = db.prepare('SELECT id, bot_active FROM doctors WHERE page_id=?').get(pageId);
   db.close();
-  return doc?.id;
+  return doc || null;
 }
 
 function trackConversation(doctorId, senderId, role, content) {
@@ -306,7 +340,13 @@ app.post('/api/chat', async (req, res) => {
   const delay = isFirst ? dFirst : dMin + Math.floor(Math.random() * (dMax - dMin + 1));
   await new Promise(r => setTimeout(r, delay));
 
-  const reply = await callClaudeReliable(result.prompt, messages, { channel: 'api-chat', doctorId: id, traceId, phase: 'primary' });
+  const scrubbed = stripTemporalAssistantHistory(messages);
+  if (scrubbed.removed > 0) {
+    console.log('[API_CHAT][temporal_history_removed]', { traceId, doctorId: id, removed: scrubbed.removed, ...getLogTimeContext() });
+  }
+
+  const messagesWithReminder = [...scrubbed.messages, buildTemporalReminderMessage()];
+  const reply = await callClaudeReliable(result.prompt, messagesWithReminder, { channel: 'api-chat', doctorId: id, traceId, phase: 'primary' });
   if (!reply) {
     console.warn('[API_CHAT][fallback]', { traceId, doctorId: id, reason: 'primary_call_failed' });
   }
@@ -324,31 +364,53 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
+  console.log('[Webhook][received]', { ...getLogTimeContext() });
   console.log('POST recebido:', JSON.stringify(req.body, null, 2));
   try {
     if (req.body.object !== 'instagram') return;
 
     for (const entry of req.body.entry || []) {
       const pageId = entry.id;
-      const doctorId = findDoctorByPageId(pageId);
+      const doctorStatus = findDoctorStatusByPageId(pageId);
 
-      if (!doctorId) {
-        console.warn('Nenhum doutor para pageId:', pageId);
+      if (!doctorStatus || doctorStatus.bot_active !== 1) {
+        console.warn('Nenhum doutor ativo para pageId:', pageId, {
+          doctorId: doctorStatus?.id || null,
+          botActive: doctorStatus?.bot_active ?? null,
+          ...getLogTimeContext()
+        });
         continue;
       }
+
+      const doctorId = doctorStatus.id;
 
       // Formato real do Instagram Webhooks
       for (const change of entry.changes || []) {
         if (change.field !== 'messages') continue;
         const event = change.value;
 
-        if (event?.message?.is_echo) continue;
+        if (event?.message?.is_echo) {
+          console.log('[Webhook][skip_echo]', { pageId, doctorId, source: 'changes', ...getLogTimeContext() });
+          continue;
+        }
+        if (event?.message?.is_deleted) {
+          console.log('[Webhook][skip_deleted]', { pageId, doctorId, source: 'changes', ...getLogTimeContext() });
+          continue;
+        }
 
         const senderId = event?.sender?.id;
         const messageText = event?.message?.text;
 
         if (!senderId || !messageText) {
-          console.warn('Mensagem inválida ou sem texto');
+          console.warn('[Webhook][invalid_message]', {
+            pageId,
+            doctorId,
+            source: 'changes',
+            hasSender: Boolean(senderId),
+            hasText: Boolean(messageText),
+            hasAttachments: Boolean(event?.message?.attachments?.length),
+            ...getLogTimeContext()
+          });
           continue;
         }
 
@@ -357,12 +419,30 @@ app.post('/webhook', async (req, res) => {
 
       // Formato Messenger Platform (fallback)
       for (const event of entry.messaging || []) {
-        if (event.message?.is_echo) continue;
+        if (event.message?.is_echo) {
+          console.log('[Webhook][skip_echo]', { pageId, doctorId, source: 'messaging', ...getLogTimeContext() });
+          continue;
+        }
+        if (event.message?.is_deleted) {
+          console.log('[Webhook][skip_deleted]', { pageId, doctorId, source: 'messaging', ...getLogTimeContext() });
+          continue;
+        }
 
         const senderId = event.sender?.id;
         const messageText = event.message?.text;
 
-        if (!senderId || !messageText) continue;
+        if (!senderId || !messageText) {
+          console.warn('[Webhook][invalid_message]', {
+            pageId,
+            doctorId,
+            source: 'messaging',
+            hasSender: Boolean(senderId),
+            hasText: Boolean(messageText),
+            hasAttachments: Boolean(event?.message?.attachments?.length),
+            ...getLogTimeContext()
+          });
+          continue;
+        }
 
         await handleInstagramMessage(senderId, messageText, doctorId);
       }

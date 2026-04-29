@@ -34,10 +34,17 @@ function isRetryableAnthropicError(status, err) {
   return type.includes('rate_limit') || type.includes('overloaded') || type.includes('timeout');
 }
 
+function getLogTimeContext() {
+  const { dateText, timeText } = getNowInSaoPaulo();
+  return { logTimeIso: new Date().toISOString(), spDateText: dateText, spTimeText: timeText };
+}
+
 function claudeLog(level, event, payload) {
   if (level === 'info' && !DEBUG_CLAUDE) return;
   const fn = level === 'error' ? console.error : (level === 'warn' ? console.warn : console.log);
-  fn(`[Claude][${event}]`, payload);
+  const timeCtx = getLogTimeContext();
+  const fullPayload = payload && typeof payload === 'object' ? { ...payload, ...timeCtx } : { payload, ...timeCtx };
+  fn(`[Claude][${event}]`, fullPayload);
 }
 
 function extractClaudeText(data) {
@@ -139,6 +146,14 @@ function buildTemporalSystemContext() {
   return `## CONTEXTO TEMPORAL ATUAL\n- Data atual (America/Sao_Paulo): ${dateText}\n- Hora atual (America/Sao_Paulo): ${timeText}\n- Se perguntarem data ou hora, use exatamente este contexto e nao invente.`;
 }
 
+function buildTemporalReminderMessage() {
+  const { dateText, timeText } = getNowInSaoPaulo();
+  return {
+    role: 'user',
+    content: `[Sistema: A data e hora atual e ${dateText} ${timeText} (America/Sao_Paulo). Ignore qualquer data mencionada no historico e responda com base apenas nesta data atual.]`
+  };
+}
+
 function pickBestDisplayName(profile) {
   if (!profile) return null;
   if (profile.name && String(profile.name).trim()) return String(profile.name).trim();
@@ -158,6 +173,25 @@ function isGreetingOnlyMessage(text) {
   if (!normalized) return false;
   const greetingPattern = /^(oi|ola|bom dia|boa tarde|boa noite|e ai|fala|opa|tudo bem|tudo bom|bom dia dr|boa tarde dr|boa noite dr)$/;
   return greetingPattern.test(normalized);
+}
+
+function shouldDropTemporalAssistantMessage(message) {
+  if (!message || message.role !== 'assistant' || typeof message.content !== 'string') return false;
+  const text = message.content.toLowerCase();
+  if (text.includes('contexto temporal atual')) return true;
+  const temporalPattern = /(\b(hoje|amanha|amanhã|ontem)\b)|(\b\d{1,2}\/\d{1,2}\/\d{2,4}\b)|(\b\d{1,2}\s+de\s+[a-z]+\b)/i;
+  return temporalPattern.test(text);
+}
+
+function stripTemporalAssistantHistory(messages) {
+  if (!Array.isArray(messages) || !messages.length) return { messages, removed: 0 };
+  let removed = 0;
+  const filtered = messages.filter(m => {
+    const drop = shouldDropTemporalAssistantMessage(m);
+    if (drop) removed += 1;
+    return !drop;
+  });
+  return { messages: filtered, removed };
 }
 
 function normalizeText(text) {
@@ -530,6 +564,10 @@ export function parseInstagramMessage(webhookData) {
  * @returns {Promise<boolean>} True se enviou com sucesso
  */
 export async function sendInstagramResponse(senderId, text) {
+  if (!String(text || '').trim()) {
+    console.warn('[Instagram][send_skip_empty]', { senderId, ...getLogTimeContext() });
+    return false;
+  }
   if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === 'preencher-depois') {
     console.warn('PAGE_ACCESS_TOKEN não configurado. Resposta não será enviada ao Instagram.');
     return false;
@@ -592,7 +630,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     }
 
     const traceId = `${doctorId}:${senderId}:${Date.now()}`;
-    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, userChars: userMessage.length });
+    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, userChars: userMessage.length, ...getLogTimeContext() });
 
     // Busca prompt do médico
     const result = buildPrompt(doctorId);
@@ -611,7 +649,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
       });
       trackConversation(doctorId, senderId, 'assistant', greetingReply);
       await sendInstagramResponse(senderId, greetingReply);
-      console.log('[Instagram][greeting_short_reply]', { traceId, doctorId, senderId, replyChars: greetingReply.length });
+      console.log('[Instagram][greeting_short_reply]', { traceId, doctorId, senderId, replyChars: greetingReply.length, ...getLogTimeContext() });
       return greetingReply;
     }
 
@@ -630,6 +668,12 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
 
     // Adiciona a mensagem atual manualmente no payload para o Claude.
     messages.push({ role: 'user', content: userMessage });
+
+    const scrubbed = stripTemporalAssistantHistory(messages);
+    if (scrubbed.removed > 0) {
+      console.log('[Instagram][temporal_history_removed]', { traceId, doctorId, senderId, removed: scrubbed.removed, ...getLogTimeContext() });
+    }
+    messages = scrubbed.messages;
 
     // Persiste a mensagem atual do usuário depois da montagem do payload.
     const profile = await fetchInstagramProfile(senderId);
@@ -651,6 +695,9 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
       }))
     });
 
+    // Lembrete de data/hora atual para evitar respostas com data antiga.
+    messages.push(buildTemporalReminderMessage());
+
     // Chama Claude
     const rawReply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });
     const reply = sanitizeAssistantReply(rawReply, {
@@ -661,10 +708,10 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     });
     
     if (!reply) {
-      console.warn('[Instagram][fallback_phase_1]', { traceId, doctorId, senderId, reason: 'all_reliable_attempts_failed' });
+      console.warn('[Instagram][fallback_phase_1]', { traceId, doctorId, senderId, reason: 'all_reliable_attempts_failed', ...getLogTimeContext() });
       const essentialPrompt = buildEssentialSystemPrompt(doctorId);
       if (essentialPrompt) {
-        console.warn('[Instagram][processed_recovery_start]', { traceId, doctorId, senderId });
+        console.warn('[Instagram][processed_recovery_start]', { traceId, doctorId, senderId, ...getLogTimeContext() });
         const recoveredRaw = await callClaudeReliable(essentialPrompt, [{ role: 'user', content: String(messageText || '') }], {
           channel: 'instagram',
           doctorId,
@@ -682,7 +729,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
         if (recovered) {
           trackConversation(doctorId, senderId, 'assistant', recovered);
           await sendInstagramResponse(senderId, recovered);
-          console.log('[Instagram][processed_recovery_success]', { traceId, doctorId, senderId, replyChars: recovered.length });
+          console.log('[Instagram][processed_recovery_success]', { traceId, doctorId, senderId, replyChars: recovered.length, ...getLogTimeContext() });
           return recovered;
         }
       }
@@ -699,7 +746,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     // Envia pro Instagram
     await sendInstagramResponse(senderId, reply);
 
-    console.log('[Instagram][outbound_success]', { traceId, doctorId, senderId, replyChars: reply.length });
+    console.log('[Instagram][outbound_success]', { traceId, doctorId, senderId, replyChars: reply.length, ...getLogTimeContext() });
     return reply;
   } catch (error) {
     console.error('Error handling Instagram message:', error);
