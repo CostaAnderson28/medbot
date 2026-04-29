@@ -255,15 +255,28 @@ function stripIrrelevantCta(text) {
   return String(text || '').trim();
 }
 
+function pickGreetingText(userMessage) {
+  const normalized = String(userMessage || '').trim().toLowerCase();
+  if (normalized.includes('boa noite')) return 'Boa noite';
+  if (normalized.includes('boa tarde')) return 'Boa tarde';
+  if (normalized.includes('bom dia')) return 'Bom dia';
+
+  const hour = Number(getNowInSaoPaulo().timeText.split(':')[0]);
+  if (hour >= 18) return 'Boa noite';
+  if (hour >= 12) return 'Boa tarde';
+  return 'Bom dia';
+}
+
 function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', messages = [], logContext = {} } = {}) {
+  if (isGreetingOnlyMessage(userMessage)) {
+    const greeting = pickGreetingText(userMessage);
+    const doc = String(doctorName || '').trim();
+    if (doc) return `${greeting}! Sou o ${doc}. Como posso te ajudar hoje?`;
+    return `${greeting}! Como posso te ajudar hoje?`;
+  }
+
   let text = String(reply || '').replace(/\s+/g, ' ').trim();
   if (!text) return '';
-
-  if (isGreetingOnlyMessage(userMessage)) {
-    const doc = String(doctorName || '').trim();
-    if (doc) return `Bom dia! Sou o ${doc}. Como posso te ajudar hoje?`;
-    return 'Bom dia! Como posso te ajudar hoje?';
-  }
 
   // Evita alegacoes pessoais de experiencia nao verificavel.
   text = text.replace(
