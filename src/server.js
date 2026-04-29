@@ -398,6 +398,17 @@ app.post('/webhook', async (req, res) => {
           continue;
         }
 
+        if (event?.read) {
+          console.log('[Webhook][read_receipt]', {
+            pageId,
+            doctorId,
+            source: 'changes',
+            mid: event.read?.mid || null,
+            ...getLogTimeContext()
+          });
+          continue;
+        }
+
         const senderId = event?.sender?.id;
         const messageText = event?.message?.text;
 
@@ -425,6 +436,17 @@ app.post('/webhook', async (req, res) => {
         }
         if (event.message?.is_deleted) {
           console.log('[Webhook][skip_deleted]', { pageId, doctorId, source: 'messaging', ...getLogTimeContext() });
+          continue;
+        }
+
+        if (event.read) {
+          console.log('[Webhook][read_receipt]', {
+            pageId,
+            doctorId,
+            source: 'messaging',
+            mid: event.read?.mid || null,
+            ...getLogTimeContext()
+          });
           continue;
         }
 
