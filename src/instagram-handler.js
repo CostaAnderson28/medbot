@@ -3,6 +3,8 @@ import { buildPrompt } from './prompt-builder.js';
 import { getDb } from './db/setup.js';
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || '';
+const PAGE_TOKEN_ARRASCAETA = process.env.PAGE_TOKEN_ARRASCAETA || '';
+const PAGE_TOKEN_ANTONIO = process.env.PAGE_TOKEN_ANTONIO || '';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const profileCache = new Map();
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
@@ -15,6 +17,14 @@ const MAX_REPLY_SENTENCES = Number(process.env.MAX_REPLY_SENTENCES || 3);
 const MAX_REPLY_CHARS = Number(process.env.MAX_REPLY_CHARS || 360);
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+
+function getPageAccessTokenForDoctor(doctorId) {
+  const byDoctor = {
+    'dr-arrascaeta': PAGE_TOKEN_ARRASCAETA,
+    'dr-antonio': PAGE_TOKEN_ANTONIO
+  };
+  return byDoctor[doctorId] || PAGE_ACCESS_TOKEN || '';
+}
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -317,8 +327,9 @@ function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', mess
   return text;
 }
 
-export async function fetchInstagramProfile(senderId) {
-  if (!senderId || !PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === 'preencher-depois') return null;
+export async function fetchInstagramProfile(senderId, doctorId) {
+  const token = getPageAccessTokenForDoctor(doctorId);
+  if (!senderId || !token || token === 'preencher-depois') return null;
 
   const cacheKey = String(senderId);
   const cached = profileCache.get(cacheKey);
@@ -326,8 +337,8 @@ export async function fetchInstagramProfile(senderId) {
   if (cached && (now - cached.ts) < 6 * 60 * 60 * 1000) return cached.value;
 
   const urls = [
-    `https://graph.facebook.com/v18.0/${encodeURIComponent(senderId)}?fields=name,username&access_token=${encodeURIComponent(PAGE_ACCESS_TOKEN)}`,
-    `https://graph.instagram.com/v18.0/${encodeURIComponent(senderId)}?fields=name,username&access_token=${encodeURIComponent(PAGE_ACCESS_TOKEN)}`
+    `https://graph.facebook.com/v18.0/${encodeURIComponent(senderId)}?fields=name,username&access_token=${encodeURIComponent(token)}`,
+    `https://graph.instagram.com/v18.0/${encodeURIComponent(senderId)}?fields=name,username&access_token=${encodeURIComponent(token)}`
   ];
 
   for (const url of urls) {
@@ -576,13 +587,14 @@ export function parseInstagramMessage(webhookData) {
  * @param {string} text - Texto da resposta
  * @returns {Promise<boolean>} True se enviou com sucesso
  */
-export async function sendInstagramResponse(senderId, text) {
+export async function sendInstagramResponse(senderId, text, doctorId) {
   if (!String(text || '').trim()) {
-    console.warn('[Instagram][send_skip_empty]', { senderId, ...getLogTimeContext() });
+    console.warn('[Instagram][send_skip_empty]', { senderId, doctorId, ...getLogTimeContext() });
     return false;
   }
-  if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === 'preencher-depois') {
-    console.warn('PAGE_ACCESS_TOKEN não configurado. Resposta não será enviada ao Instagram.');
+  const token = getPageAccessTokenForDoctor(doctorId);
+  if (!token || token === 'preencher-depois') {
+    console.warn('[Instagram][token_missing]', { senderId, doctorId, ...getLogTimeContext() });
     return false;
   }
 
@@ -597,7 +609,7 @@ export async function sendInstagramResponse(senderId, text) {
       body: JSON.stringify({
         recipient: { id: senderId },
         message: { text: text },
-        access_token: PAGE_ACCESS_TOKEN
+        access_token: token
       })
     });
 
@@ -650,7 +662,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     if (!result) {
       const errorMsg = 'Desculpe, tive uma dificuldade. Tente novamente mais tarde.';
       trackConversation(doctorId, senderId, 'assistant', errorMsg);
-      await sendInstagramResponse(senderId, errorMsg);
+      await sendInstagramResponse(senderId, errorMsg, doctorId);
       return errorMsg;
     }
 
@@ -661,7 +673,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
         doctorName: result?.doctor?.name || ''
       });
       trackConversation(doctorId, senderId, 'assistant', greetingReply);
-      await sendInstagramResponse(senderId, greetingReply);
+      await sendInstagramResponse(senderId, greetingReply, doctorId);
       console.log('[Instagram][greeting_short_reply]', { traceId, doctorId, senderId, replyChars: greetingReply.length, ...getLogTimeContext() });
       return greetingReply;
     }
@@ -689,7 +701,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     messages = scrubbed.messages;
 
     // Persiste a mensagem atual do usuário depois da montagem do payload.
-    const profile = await fetchInstagramProfile(senderId);
+    const profile = await fetchInstagramProfile(senderId, doctorId);
     trackConversation(doctorId, senderId, 'user', userMessage, profile);
 
     claudeLog('info', 'payload_debug', {
@@ -741,7 +753,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
 
         if (recovered) {
           trackConversation(doctorId, senderId, 'assistant', recovered);
-          await sendInstagramResponse(senderId, recovered);
+          await sendInstagramResponse(senderId, recovered, doctorId);
           console.log('[Instagram][processed_recovery_success]', { traceId, doctorId, senderId, replyChars: recovered.length, ...getLogTimeContext() });
           return recovered;
         }
@@ -749,7 +761,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
 
       const finalFallback = 'Obrigada pela paciencia. Pode repetir sua pergunta, por favor?';
       trackConversation(doctorId, senderId, 'assistant', finalFallback);
-      await sendInstagramResponse(senderId, finalFallback);
+      await sendInstagramResponse(senderId, finalFallback, doctorId);
       return finalFallback;
     }
 
@@ -757,14 +769,14 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     trackConversation(doctorId, senderId, 'assistant', reply);
 
     // Envia pro Instagram
-    await sendInstagramResponse(senderId, reply);
+    await sendInstagramResponse(senderId, reply, doctorId);
 
     console.log('[Instagram][outbound_success]', { traceId, doctorId, senderId, replyChars: reply.length, ...getLogTimeContext() });
     return reply;
   } catch (error) {
     console.error('Error handling Instagram message:', error);
     const errorMsg = 'Desculpe, ocorreu um erro. Tente novamente.';
-    await sendInstagramResponse(senderId, errorMsg);
+    await sendInstagramResponse(senderId, errorMsg, doctorId);
     return null;
   }
 }

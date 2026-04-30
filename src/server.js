@@ -492,7 +492,7 @@ app.get('/api/conversations', authMiddleware, async (req, res) => {
     // Tenta enriquecer nomes de conversas antigas ainda sem perfil salvo.
     for (const conv of conversations) {
       if ((conv.lead_name || conv.instagram_username) || !conv.sender_id) continue;
-      const profile = await fetchInstagramProfile(conv.sender_id);
+      const profile = await fetchInstagramProfile(conv.sender_id, doctorId);
       const profileName = profile?.name ? String(profile.name).trim() : null;
       const profileUsername = profile?.username ? String(profile.username).trim() : null;
       if (!profileName && !profileUsername) continue;
@@ -570,7 +570,7 @@ app.post('/api/conversations/:id/manual-message', authMiddleware, async (req, re
       return res.status(400).json({ error: 'Conversa sem sender_id do Instagram' });
     }
 
-    const sent = await sendInstagramResponse(conv.sender_id, text);
+    const sent = await sendInstagramResponse(conv.sender_id, text, doctorId);
     if (!sent) {
       db.close();
       return res.status(502).json({ error: 'Falha ao enviar mensagem para o Instagram' });
