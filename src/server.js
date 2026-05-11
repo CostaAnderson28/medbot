@@ -33,6 +33,24 @@ const ANTHROPIC_ENABLE_MODEL_FALLBACK = process.env.ANTHROPIC_ENABLE_MODEL_FALLB
 const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const WEBHOOK_DEDUP_TTL_MS = Number(process.env.WEBHOOK_DEDUP_TTL_MS || 120000);
+const webhookDedupCache = new Map();
+
+function shouldProcessWebhookMessage(mid, pageId) {
+  if (!mid) return true;
+  const key = `${pageId || 'unknown'}:${mid}`;
+  const now = Date.now();
+  const lastSeen = webhookDedupCache.get(key);
+  if (lastSeen && (now - lastSeen) < WEBHOOK_DEDUP_TTL_MS) return false;
+  webhookDedupCache.set(key, now);
+
+  if (webhookDedupCache.size > 5000) {
+    for (const [k, ts] of webhookDedupCache.entries()) {
+      if ((now - ts) > WEBHOOK_DEDUP_TTL_MS) webhookDedupCache.delete(k);
+    }
+  }
+  return true;
+}
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -411,6 +429,7 @@ app.post('/webhook', async (req, res) => {
 
         const senderId = event?.sender?.id;
         const messageText = event?.message?.text;
+        const mid = event?.message?.mid || null;
 
         if (!senderId || !messageText) {
           console.warn('[Webhook][invalid_message]', {
@@ -420,12 +439,18 @@ app.post('/webhook', async (req, res) => {
             hasSender: Boolean(senderId),
             hasText: Boolean(messageText),
             hasAttachments: Boolean(event?.message?.attachments?.length),
+            mid,
             ...getLogTimeContext()
           });
           continue;
         }
 
-        await handleInstagramMessage(senderId, messageText, doctorId);
+        if (!shouldProcessWebhookMessage(mid, pageId)) {
+          console.warn('[Webhook][skip_duplicate]', { pageId, doctorId, source: 'changes', mid, ...getLogTimeContext() });
+          continue;
+        }
+
+        await handleInstagramMessage(senderId, messageText, doctorId, mid);
       }
 
       // Formato Messenger Platform (fallback)
@@ -452,6 +477,7 @@ app.post('/webhook', async (req, res) => {
 
         const senderId = event.sender?.id;
         const messageText = event.message?.text;
+        const mid = event.message?.mid || null;
 
         if (!senderId || !messageText) {
           console.warn('[Webhook][invalid_message]', {
@@ -461,12 +487,18 @@ app.post('/webhook', async (req, res) => {
             hasSender: Boolean(senderId),
             hasText: Boolean(messageText),
             hasAttachments: Boolean(event?.message?.attachments?.length),
+            mid,
             ...getLogTimeContext()
           });
           continue;
         }
 
-        await handleInstagramMessage(senderId, messageText, doctorId);
+        if (!shouldProcessWebhookMessage(mid, pageId)) {
+          console.warn('[Webhook][skip_duplicate]', { pageId, doctorId, source: 'messaging', mid, ...getLogTimeContext() });
+          continue;
+        }
+
+        await handleInstagramMessage(senderId, messageText, doctorId, mid);
       }
     }
   } catch (err) {

@@ -640,7 +640,7 @@ export async function sendInstagramResponse(senderId, text, doctorId) {
  * @param {string} doctorId - ID do médico
  * @returns {Promise<string>} Resposta enviada
  */
-export async function handleInstagramMessage(senderId, messageText, doctorId) {
+export async function handleInstagramMessage(senderId, messageText, doctorId, mid = null) {
   try {
     // Valida entrada
     if (!senderId || !messageText || !doctorId) {
@@ -655,7 +655,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId) {
     }
 
     const traceId = `${doctorId}:${senderId}:${Date.now()}`;
-    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, userChars: userMessage.length, ...getLogTimeContext() });
+    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, mid, userChars: userMessage.length, ...getLogTimeContext() });
 
     // Busca prompt do médico
     const result = buildPrompt(doctorId);
