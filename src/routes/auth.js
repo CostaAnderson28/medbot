@@ -18,7 +18,16 @@ router.post('/login', (req, res) => {
   }
 
   const token = generateToken(doc);
-  res.json({ token, doctor: { id: doc.id, name: doc.name, email: doc.email } });
+  res.json({
+    token,
+    doctor: {
+      id: doc.id,
+      name: doc.name,
+      email: doc.email,
+      is_admin: doc.is_admin ? 1 : 0,
+      prompt_kind: doc.prompt_kind || 'medico'
+    }
+  });
 });
 
 router.post('/register', (req, res) => {

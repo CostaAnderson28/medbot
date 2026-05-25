@@ -119,8 +119,9 @@ body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-heigh
 <div class="nav">
 <a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
 <a href="#" data-page="crm"><span class="icon">👥</span><span>Conversas</span></a>
-<a href="#" data-page="agenda"><span class="icon">📅</span><span>Agenda</span></a>
-<a href="#" data-page="instrucoes"><span class="icon">📝</span><span>Instruções</span></a>
+<a href="#" data-page="agenda" data-only="medico"><span class="icon">📅</span><span>Agenda</span></a>
+<a href="#" data-page="instrucoes" data-only="medico"><span class="icon">📝</span><span>Instruções</span></a>
+<a href="#" data-page="produtos" data-only="custom_full"><span class="icon">📦</span><span>Produtos</span></a>
 <a href="#" data-page="simulacao"><span class="icon">💬</span><span>Simulação</span></a>
 <a href="#" data-page="config"><span class="icon">⚙️</span><span>Configurações</span></a>
 </div>
@@ -133,7 +134,10 @@ body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-heigh
 <div class="main" id="mainArea">
 <div class="topbar" id="topbar">
 <div><h2 id="pageTitle">Dashboard</h2><div style="font-size:13px;color:#888" id="doctorName"></div></div>
+<div style="display:flex;gap:8px">
+<a href="/admin.html" class="btn btn-sm btn-outline" id="adminLink" style="display:none;text-decoration:none">Painel Admin</a>
 <button class="btn btn-sm btn-outline" onclick="doLogout()">Sair</button>
+</div>
 </div>
 
 <div class="page active" id="page-dashboard">
@@ -169,6 +173,34 @@ body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-heigh
 <div class="field"><label>Categoria</label><select id="newInstrCat"><option value="memoria">Memória</option><option value="convenios">Convênios</option><option value="procedimentos">Procedimentos</option><option value="pos_operatorio">Pós-operatório</option><option value="agendamento">Agendamento</option><option value="personalizado">Personalizado</option></select></div>
 <div class="field"><label>Conteúdo</label><textarea id="newInstrContent" placeholder="Escreva a instrução..."></textarea></div>
 <div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="addInstr()" style="width:auto">Adicionar</button><button class="btn btn-sm btn-danger" onclick="document.getElementById('addInstrBox').style.display='none'">Cancelar</button></div>
+</div>
+</div>
+
+<div class="page" id="page-produtos">
+<div class="section">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+<h3 style="margin:0">Catálogo de produtos</h3>
+<button class="btn btn-sm btn-outline" onclick="showAddProduct()">+ Novo produto</button>
+</div>
+<p style="font-size:12px;color:#888;margin-bottom:14px">Estes produtos são incluídos automaticamente no prompt do bot, agrupados por categoria.</p>
+<div id="productsList">Carregando...</div>
+</div>
+<div class="section" id="addProductBox" style="display:none">
+<h3 id="addProductTitle">Adicionar produto</h3>
+<input type="hidden" id="editProductId">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Nome</label><input id="newProdName" placeholder="Ex: MDF madeirado"></div>
+<div class="field"><label>Categoria</label><input id="newProdCategory" placeholder="Ex: MDF"></div>
+</div>
+<div class="field"><label>Descrição</label><textarea id="newProdDescription" placeholder="Detalhes do produto"></textarea></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Preço</label><input id="newProdPrice" placeholder="sob consulta / R$ 99,00 / etc"></div>
+<div class="field"><label>Ordem</label><input type="number" id="newProdSort" value="0"></div>
+</div>
+<div style="display:flex;gap:8px">
+<button class="btn btn-sm btn-primary" onclick="saveProduct()" style="width:auto">Salvar</button>
+<button class="btn btn-sm btn-danger" onclick="cancelProduct()">Cancelar</button>
+</div>
 </div>
 </div>
 
@@ -245,6 +277,13 @@ function showApp(){
   document.getElementById('botToggle').checked=DOCTOR.bot_active;
   document.getElementById('botLabel').textContent=DOCTOR.bot_active?'Bot ativo':'Bot pausado';
   document.getElementById('simName').textContent='Simulação — '+DOCTOR.name;
+  // Mostra abas conforme prompt_kind
+  var kind=DOCTOR.prompt_kind||'medico';
+  document.querySelectorAll('.nav a[data-only]').forEach(function(a){
+    a.style.display=(a.dataset.only===kind)?'':'none';
+  });
+  // Link de admin
+  if(DOCTOR.is_admin){document.getElementById('adminLink').style.display='inline-block'}
   loadDashboard();
 }
 
@@ -256,7 +295,7 @@ document.querySelectorAll('.nav a').forEach(function(a){
     var pg=a.dataset.page;
     document.querySelectorAll('.page,.page-flex').forEach(function(p){p.classList.remove('active')});
     document.getElementById('page-'+pg).classList.add('active');
-    var titles={dashboard:'Dashboard',crm:'Conversas',agenda:'Agenda Semanal',instrucoes:'Instruções do Bot',simulacao:'Simulação',config:'Configurações'};
+    var titles={dashboard:'Dashboard',crm:'Conversas',agenda:'Agenda Semanal',instrucoes:'Instruções do Bot',produtos:'Produtos',simulacao:'Simulação',config:'Configurações'};
     document.getElementById('pageTitle').textContent=titles[pg]||pg;
     var mainArea=document.getElementById('mainArea');
     var topbar=document.getElementById('topbar');
@@ -266,9 +305,78 @@ document.querySelectorAll('.nav a').forEach(function(a){
     if(pg==='crm')loadCRM();
     if(pg==='agenda')loadSchedule();
     if(pg==='instrucoes')loadInstructions();
+    if(pg==='produtos')loadProducts();
     if(pg==='config')loadProfile();
   });
 });
+
+async function loadProducts(){
+  var rows=await api('/products');
+  if(!Array.isArray(rows)){document.getElementById('productsList').innerHTML='<div style="color:#888;font-size:13px">Falha ao carregar produtos.</div>';return}
+  if(!rows.length){document.getElementById('productsList').innerHTML='<div style="text-align:center;padding:30px 20px;color:#aaa;font-size:13px">Nenhum produto cadastrado.<br><span style="font-size:11px">Use o botão acima para adicionar.</span></div>';return}
+  var grouped={};rows.forEach(function(p){var c=p.category||'Outros';(grouped[c]=grouped[c]||[]).push(p)});
+  var html='';
+  Object.keys(grouped).forEach(function(cat){
+    html+='<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">'+escapeHtml(cat)+'</div>';
+    grouped[cat].forEach(function(p){
+      var price=p.price?'<span style="color:#888;font-size:11px;margin-left:8px">'+escapeHtml(p.price)+'</span>':'';
+      var desc=p.description?'<div style="font-size:12px;color:#666;margin-top:2px">'+escapeHtml(p.description)+'</div>':'';
+      var inact=p.active?'':'opacity:.5;';
+      html+='<div class="instr-item" style="'+inact+'"><div style="flex:1"><div style="font-size:13px;font-weight:600">'+escapeHtml(p.name)+price+'</div>'+desc+'</div><button class="btn btn-sm btn-outline" onclick="editProduct('+p.id+')">Editar</button><button class="btn btn-sm btn-danger" onclick="deleteProduct('+p.id+')">×</button></div>';
+    });
+    html+='</div>';
+  });
+  document.getElementById('productsList').innerHTML=html;
+  window.__products=rows;
+}
+
+function showAddProduct(){
+  document.getElementById('editProductId').value='';
+  document.getElementById('addProductTitle').textContent='Adicionar produto';
+  ['newProdName','newProdCategory','newProdDescription','newProdPrice'].forEach(function(i){document.getElementById(i).value=''});
+  document.getElementById('newProdSort').value='0';
+  document.getElementById('addProductBox').style.display='block';
+  window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+}
+
+function editProduct(id){
+  var p=(window.__products||[]).find(function(x){return x.id===id});
+  if(!p)return;
+  document.getElementById('editProductId').value=String(id);
+  document.getElementById('addProductTitle').textContent='Editar produto';
+  document.getElementById('newProdName').value=p.name||'';
+  document.getElementById('newProdCategory').value=p.category||'';
+  document.getElementById('newProdDescription').value=p.description||'';
+  document.getElementById('newProdPrice').value=p.price||'';
+  document.getElementById('newProdSort').value=p.sort_order||0;
+  document.getElementById('addProductBox').style.display='block';
+  window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+}
+
+function cancelProduct(){document.getElementById('addProductBox').style.display='none'}
+
+async function saveProduct(){
+  var id=document.getElementById('editProductId').value;
+  var body={
+    name:document.getElementById('newProdName').value.trim(),
+    category:document.getElementById('newProdCategory').value.trim()||null,
+    description:document.getElementById('newProdDescription').value.trim()||null,
+    price:document.getElementById('newProdPrice').value.trim()||null,
+    sort_order:Number(document.getElementById('newProdSort').value)||0
+  };
+  if(!body.name){toast('Nome é obrigatório');return}
+  var r=id
+    ?await api('/products/'+id,{method:'PUT',body:JSON.stringify(body)})
+    :await api('/products',{method:'POST',body:JSON.stringify(body)});
+  if(r&&r.id){toast(id?'Atualizado':'Adicionado');document.getElementById('addProductBox').style.display='none';loadProducts()}
+  else toast('Erro ao salvar');
+}
+
+async function deleteProduct(id){
+  if(!confirm('Remover este produto?'))return;
+  var r=await api('/products/'+id,{method:'DELETE'});
+  if(r&&r.ok){toast('Removido');loadProducts()}
+}
 
 async function loadDashboard(){
   var m=await api('/metrics/summary');

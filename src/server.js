@@ -12,6 +12,8 @@ import scheduleRoutes from './routes/schedule.js';
 import instructionsRoutes from './routes/instructions.js';
 import metricsRoutes from './routes/metrics.js';
 import settingsRoutes from './routes/settings.js';
+import productsRoutes from './routes/products.js';
+import adminRoutes from './routes/admin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 setupDatabase();
@@ -133,6 +135,8 @@ app.use('/api/schedule', scheduleRoutes);
 app.use('/api/instructions', instructionsRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/products', productsRoutes);
+app.use('/api/admin', adminRoutes);
 
 const conversationHistory = new Map();
 

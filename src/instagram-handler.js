@@ -5,6 +5,9 @@ import { getDb } from './db/setup.js';
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || '';
 const PAGE_TOKEN_ARRASCAETA = process.env.PAGE_TOKEN_ARRASCAETA || '';
 const PAGE_TOKEN_ANTONIO = process.env.PAGE_TOKEN_ANTONIO || '';
+const PAGE_TOKEN_OFTALMOCLINICA = process.env.PAGE_TOKEN_OFTALMOCLINICA || '';
+const PAGE_TOKEN_R15MADEIREIRA = process.env.PAGE_TOKEN_R15MADEIREIRA || '';
+const PAGE_TOKEN_ITACARROS = process.env.PAGE_TOKEN_ITACARROS || '';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const profileCache = new Map();
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
@@ -21,7 +24,10 @@ const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 function getPageAccessTokenForDoctor(doctorId) {
   const byDoctor = {
     'dr-arrascaeta': PAGE_TOKEN_ARRASCAETA,
-    'dr-antonio': PAGE_TOKEN_ANTONIO
+    'dr-antonio': PAGE_TOKEN_ANTONIO,
+    'oftalmoclinica-icarai': PAGE_TOKEN_OFTALMOCLINICA,
+    'r15-madeireira': PAGE_TOKEN_R15MADEIREIRA,
+    'ita-carros': PAGE_TOKEN_ITACARROS
   };
   return byDoctor[doctorId] || PAGE_ACCESS_TOKEN || '';
 }

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel Admin — Medbot</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-height:100vh}
+.shell{display:flex;min-height:100vh}
+.sidebar{width:220px;background:#0f2540;color:#fff;flex-shrink:0;display:flex;flex-direction:column;padding:20px 0;position:sticky;top:0;height:100vh}
+.sidebar .logo{padding:0 20px 20px;font-size:16px;font-weight:700;border-bottom:1px solid rgba(255,255,255,.1)}
+.sidebar .logo span{color:#e85a4f}
+.nav{flex:1;padding:16px 0}
+.nav a{display:flex;align-items:center;gap:10px;padding:10px 20px;color:rgba(255,255,255,.7);text-decoration:none;font-size:13px;font-weight:500;border-left:3px solid transparent;cursor:pointer}
+.nav a:hover,.nav a.active{color:#fff;background:rgba(255,255,255,.05);border-left-color:#e85a4f}
+.nav .out{margin-top:auto;color:rgba(255,255,255,.5)}
+.main{flex:1;padding:32px;max-width:1200px}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.topbar h1{font-size:22px;font-weight:700;color:#1a2a3a}
+.topbar .who{font-size:12px;color:#888}
+.btn{padding:8px 16px;border:none;border-radius:8px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}
+.btn-primary{background:linear-gradient(135deg,#1e3a5f,#2a6a9f);color:#fff}
+.btn-danger{background:#fee;color:#e74c3c;border:1px solid #fcc}
+.btn-outline{background:#fff;color:#1e3a5f;border:1.5px solid #1e3a5f}
+.btn-sm{padding:5px 10px;font-size:11px;border-radius:6px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;font-weight:600;color:#555;margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px}
+.field input,.field select,.field textarea{width:100%;padding:9px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;outline:none}
+.field input:focus,.field textarea:focus,.field select:focus{border-color:#1e3a5f}
+.field textarea{resize:vertical;min-height:120px;font-family:'JetBrains Mono','Menlo',monospace;font-size:12px;line-height:1.5}
+.card{background:#fff;border-radius:12px;padding:20px;border:1px solid #eee;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:11px 12px;text-align:left;border-bottom:1px solid #f0f0f0}
+th{font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.4px;background:#fafbfc}
+tr:hover td{background:#fafbfc}
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.badge-active{background:#e8f5e9;color:#2e7d32}
+.badge-paused{background:#fee;color:#c62828}
+.badge-medico{background:#e3f2fd;color:#1565c0}
+.badge-empresa{background:#fff3e0;color:#e65100}
+.toggle{position:relative;width:36px;height:20px;cursor:pointer;display:inline-block}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;inset:0;background:#ccc;border-radius:20px;transition:.3s}
+.toggle .slider:before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.toggle input:checked+.slider{background:#27ae60}
+.toggle input:checked+.slider:before{transform:translateX(16px)}
+.login-page{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f2540,#1e3a5f)}
+.login-box{background:#fff;border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.login-box h1{font-size:22px;color:#1a3a5c;margin-bottom:4px}
+.login-box p{font-size:13px;color:#888;margin-bottom:24px}
+.error{color:#e74c3c;font-size:12px;margin-top:8px;min-height:16px}
+.toast{position:fixed;top:16px;right:16px;background:#27ae60;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;z-index:99;display:none;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.toast.show{display:block}
+.toast.err{background:#e74c3c}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center}
+.modal.show{display:flex}
+.modal .box{background:#fff;border-radius:14px;padding:24px;width:100%;max-width:680px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.modal h2{font-size:18px;margin-bottom:18px}
+.modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;border-top:1px solid #f0f0f0;padding-top:14px}
+.page{display:none}.page.active{display:block}
+.empty{text-align:center;padding:40px 20px;color:#aaa;font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="login-page" id="loginPage" style="display:none">
+<div class="login-box">
+<h1>Painel Admin</h1>
+<p>Acesso restrito a administradores do app.</p>
+<div class="field"><label>E-mail</label><input id="lEmail" placeholder="admin@medbot.local"></div>
+<div class="field"><label>Senha</label><input type="password" id="lPass" placeholder="Sua senha"></div>
+<div class="error" id="lErr"></div>
+<button class="btn btn-primary" onclick="doLogin()" style="width:100%;margin-top:8px">Entrar</button>
+</div>
+</div>
+
+<div class="shell" id="shell" style="display:none">
+<div class="sidebar">
+<div class="logo">Chat<span>Bot</span> Admin</div>
+<div class="nav">
+<a data-page="tenants" class="active">🧩 <span>Tenants</span></a>
+<a data-page="create">➕ <span>Novo tenant</span></a>
+<a class="out" onclick="doLogout()">🚪 <span>Sair</span></a>
+</div>
+</div>
+
+<div class="main">
+<div class="topbar">
+<div>
+<h1 id="pageTitle">Tenants</h1>
+<div class="who" id="adminWho"></div>
+</div>
+<a href="/" class="btn btn-sm btn-outline" style="text-decoration:none">← Painel do tenant</a>
+</div>
+
+<div class="page active" id="page-tenants">
+<div class="card">
+<table>
+<thead><tr><th>Nome</th><th>Tipo</th><th>Email</th><th>Page ID</th><th>Conversas</th><th>Produtos</th><th>Bot</th><th>Ações</th></tr></thead>
+<tbody id="tenantsBody"></tbody>
+</table>
+</div>
+</div>
+
+<div class="page" id="page-create">
+<div class="card" style="max-width:680px">
+<h2 style="font-size:16px;margin-bottom:14px">Criar novo tenant</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>ID (slug)</label><input id="cId" placeholder="ex: minha-empresa"></div>
+<div class="field"><label>Tipo</label>
+<select id="cKind">
+<option value="medico">Médico (boilerplate)</option>
+<option value="custom_full">Empresa (prompt full + produtos)</option>
+</select>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Nome</label><input id="cName" placeholder="Ex: Dr. Fulano ou Empresa X"></div>
+<div class="field"><label>Clínica / Empresa</label><input id="cClinic"></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Email</label><input id="cEmail" placeholder="contato@..."></div>
+<div class="field"><label>Senha inicial</label><input id="cPass" placeholder="mínimo 6 chars"></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+<div class="field"><label>Instagram handle</label><input id="cInsta"></div>
+<div class="field"><label>Telefone</label><input id="cPhone"></div>
+<div class="field"><label>WhatsApp</label><input id="cWpp"></div>
+</div>
+<div class="field"><label>Endereço</label><input id="cAddr"></div>
+<div class="field" id="cPromptBox" style="display:none"><label>System prompt (markdown completo) — opcional, vc pode editar depois</label><textarea id="cPrompt" placeholder="# IDENTIDADE\nVocê é..."></textarea></div>
+<div class="error" id="cErr"></div>
+<button class="btn btn-primary" onclick="createTenant()">Criar tenant</button>
+</div>
+</div>
+</div>
+</div>
+
+<!-- Modal de detalhe / edição -->
+<div class="modal" id="detailModal">
+<div class="box">
+<h2 id="dTitle">Detalhe</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Nome</label><input id="dName"></div>
+<div class="field"><label>Clínica / Empresa</label><input id="dClinic"></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Email</label><input id="dEmail"></div>
+<div class="field"><label>Instagram</label><input id="dInsta"></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Page ID</label><input id="dPageId"></div>
+<div class="field"><label>Tipo de prompt</label>
+<select id="dKind"><option value="medico">Médico</option><option value="custom_full">Empresa (custom_full)</option></select>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Telefone</label><input id="dPhone"></div>
+<div class="field"><label>WhatsApp</label><input id="dWpp"></div>
+</div>
+<div class="field"><label>Endereço</label><input id="dAddr"></div>
+<div class="field"><label>System prompt (custom_full) / persona base</label><textarea id="dPrompt" placeholder="(deixe vazio se não usar custom_full)"></textarea></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+<div class="field"><label>Nova senha (opcional)</label><input id="dPass" placeholder="deixe em branco pra manter"></div>
+</div>
+<div class="actions">
+<button class="btn btn-sm btn-danger" onclick="closeDetail()">Cancelar</button>
+<button class="btn btn-sm btn-primary" onclick="saveDetail()">Salvar alterações</button>
+</div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var TOKEN=localStorage.getItem('token'),ADMIN=null;
+var API='/api';
+var currentTenants=[];
+var editingId=null;
+
+function toast(msg,err){var t=document.getElementById('toast');t.textContent=msg;t.classList.toggle('err',!!err);t.classList.add('show');setTimeout(function(){t.classList.remove('show')},2200)}
+
+async function api(path,opts){
+  var h={'Content-Type':'application/json'};
+  if(TOKEN)h['Authorization']='Bearer '+TOKEN;
+  var r=await fetch(API+path,Object.assign({},opts,{headers:h}));
+  if(r.status===401){doLogout();return null}
+  try{return await r.json()}catch(e){return null}
+}
+
+function showLogin(){document.getElementById('loginPage').style.display='flex';document.getElementById('shell').style.display='none'}
+function showShell(){document.getElementById('loginPage').style.display='none';document.getElementById('shell').style.display='flex';document.getElementById('adminWho').textContent=ADMIN.name+' — '+ADMIN.email;loadTenants()}
+
+async function doLogin(){
+  document.getElementById('lErr').textContent='';
+  var email=document.getElementById('lEmail').value.trim();
+  var pass=document.getElementById('lPass').value;
+  var data=await api('/auth/login',{method:'POST',body:JSON.stringify({email:email,password:pass})});
+  if(!data||data.error){document.getElementById('lErr').textContent=(data&&data.error)||'Falha no login';return}
+  if(!data.doctor||!data.doctor.is_admin){document.getElementById('lErr').textContent='Esta conta não tem permissão de admin.';return}
+  TOKEN=data.token;ADMIN=data.doctor;localStorage.setItem('token',TOKEN);showShell();
+}
+
+function doLogout(){TOKEN=null;ADMIN=null;localStorage.removeItem('token');showLogin()}
+
+async function checkAuth(){
+  if(!TOKEN){showLogin();return}
+  var d=await api('/settings/profile');
+  if(d&&d.id&&d.is_admin){ADMIN=d;showShell()}
+  else if(d&&d.id){showLogin();document.getElementById('lErr').textContent='Esta conta não tem permissão de admin.'}
+  else showLogin();
+}
+
+document.querySelectorAll('.nav a[data-page]').forEach(function(a){
+  a.addEventListener('click',function(e){
+    e.preventDefault();
+    document.querySelectorAll('.nav a').forEach(function(x){x.classList.remove('active')});
+    a.classList.add('active');
+    var pg=a.dataset.page;
+    document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});
+    document.getElementById('page-'+pg).classList.add('active');
+    document.getElementById('pageTitle').textContent=pg==='tenants'?'Tenants':'Novo tenant';
+    if(pg==='tenants')loadTenants();
+  });
+});
+
+// Toggle do textarea de prompt no form de criar — só pra custom_full
+document.getElementById('cKind').addEventListener('change',function(e){
+  document.getElementById('cPromptBox').style.display=e.target.value==='custom_full'?'block':'none';
+});
+
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+
+async function loadTenants(){
+  var rows=await api('/admin/tenants');
+  if(!Array.isArray(rows)){document.getElementById('tenantsBody').innerHTML='<tr><td colspan="8" class="empty">Falha ao carregar tenants.</td></tr>';return}
+  currentTenants=rows;
+  if(!rows.length){document.getElementById('tenantsBody').innerHTML='<tr><td colspan="8" class="empty">Nenhum tenant cadastrado.</td></tr>';return}
+  document.getElementById('tenantsBody').innerHTML=rows.map(function(t){
+    var kind=t.prompt_kind==='custom_full'?'<span class="badge badge-empresa">Empresa</span>':'<span class="badge badge-medico">Médico</span>';
+    var checked=t.bot_active?'checked':'';
+    return '<tr>'+
+      '<td><div style="font-weight:600">'+escapeHtml(t.name)+'</div><div style="font-size:11px;color:#888">'+escapeHtml(t.id)+'</div></td>'+
+      '<td>'+kind+'</td>'+
+      '<td style="font-size:12px;color:#666">'+escapeHtml(t.email)+'</td>'+
+      '<td style="font-family:monospace;font-size:11px;color:'+(t.page_id?'#333':'#bbb')+'">'+escapeHtml(t.page_id||'(sem page_id)')+'</td>'+
+      '<td style="text-align:center">'+t.conversations_count+'</td>'+
+      '<td style="text-align:center">'+t.products_count+'</td>'+
+      '<td><label class="toggle"><input type="checkbox" '+checked+' onchange="toggleBot(\''+t.id+'\',this.checked)"><span class="slider"></span></label></td>'+
+      '<td><button class="btn btn-sm btn-outline" onclick="openDetail(\''+t.id+'\')">Editar</button></td>'+
+      '</tr>';
+  }).join('');
+}
+
+async function toggleBot(id,active){
+  var r=await api('/admin/tenants/'+id+'/toggle-bot',{method:'PUT',body:JSON.stringify({active:active})});
+  if(r&&typeof r.bot_active!=='undefined'){toast(active?'Bot ativado':'Bot pausado')}
+  else toast('Erro ao alterar status',true);
+}
+
+async function openDetail(id){
+  var t=await api('/admin/tenants/'+id);
+  if(!t||t.error){toast('Erro ao carregar tenant',true);return}
+  editingId=id;
+  document.getElementById('dTitle').textContent='Editando: '+t.name;
+  document.getElementById('dName').value=t.name||'';
+  document.getElementById('dClinic').value=t.clinic||'';
+  document.getElementById('dEmail').value=t.email||'';
+  document.getElementById('dInsta').value=t.instagram_handle||'';
+  document.getElementById('dPageId').value=t.page_id||'';
+  document.getElementById('dKind').value=t.prompt_kind||'medico';
+  document.getElementById('dPhone').value=t.phone||'';
+  document.getElementById('dWpp').value=t.whatsapp||'';
+  document.getElementById('dAddr').value=t.address||'';
+  document.getElementById('dPass').value='';
+  var sp=await api('/admin/tenants/'+id+'/system-prompt');
+  document.getElementById('dPrompt').value=(sp&&sp.content)||'';
+  document.getElementById('detailModal').classList.add('show');
+}
+
+function closeDetail(){document.getElementById('detailModal').classList.remove('show');editingId=null}
+
+async function saveDetail(){
+  if(!editingId)return;
+  var body={
+    name:document.getElementById('dName').value.trim(),
+    clinic:document.getElementById('dClinic').value.trim(),
+    email:document.getElementById('dEmail').value.trim(),
+    instagram_handle:document.getElementById('dInsta').value.trim(),
+    page_id:document.getElementById('dPageId').value.trim()||null,
+    prompt_kind:document.getElementById('dKind').value,
+    phone:document.getElementById('dPhone').value.trim(),
+    whatsapp:document.getElementById('dWpp').value.trim(),
+    address:document.getElementById('dAddr').value.trim()
+  };
+  var promptText=document.getElementById('dPrompt').value;
+  var pass=document.getElementById('dPass').value;
+  var r=await api('/admin/tenants/'+editingId,{method:'PUT',body:JSON.stringify(body)});
+  if(!r||r.error){toast((r&&r.error)||'Erro ao salvar',true);return}
+  if(body.prompt_kind==='custom_full'||promptText.trim().length){
+    await api('/admin/tenants/'+editingId+'/system-prompt',{method:'PUT',body:JSON.stringify({content:promptText})});
+  }
+  if(pass&&pass.length>=6){
+    var pr=await api('/admin/tenants/'+editingId+'/password',{method:'PUT',body:JSON.stringify({password:pass})});
+    if(!pr||pr.error){toast('Dados salvos, mas senha falhou: '+((pr&&pr.error)||''),true)}
+    else toast('Salvo + senha redefinida');
+  } else toast('Salvo');
+  closeDetail();loadTenants();
+}
+
+async function createTenant(){
+  document.getElementById('cErr').textContent='';
+  var body={
+    id:document.getElementById('cId').value.trim(),
+    name:document.getElementById('cName').value.trim(),
+    clinic:document.getElementById('cClinic').value.trim(),
+    email:document.getElementById('cEmail').value.trim(),
+    password:document.getElementById('cPass').value,
+    prompt_kind:document.getElementById('cKind').value,
+    instagram_handle:document.getElementById('cInsta').value.trim(),
+    phone:document.getElementById('cPhone').value.trim(),
+    whatsapp:document.getElementById('cWpp').value.trim(),
+    address:document.getElementById('cAddr').value.trim(),
+    system_prompt:document.getElementById('cPrompt').value
+  };
+  if(!body.id||!body.name||!body.email||!body.password){document.getElementById('cErr').textContent='Preencha id, nome, email e senha.';return}
+  if(body.password.length<6){document.getElementById('cErr').textContent='Senha precisa ter pelo menos 6 caracteres.';return}
+  var r=await api('/admin/tenants',{method:'POST',body:JSON.stringify(body)});
+  if(!r||r.error){document.getElementById('cErr').textContent=(r&&r.error)||'Erro ao criar';return}
+  toast('Tenant criado: '+r.id);
+  ['cId','cName','cClinic','cEmail','cPass','cInsta','cPhone','cWpp','cAddr','cPrompt'].forEach(function(i){document.getElementById(i).value=''});
+  document.querySelector('.nav a[data-page="tenants"]').click();
+}
+
+checkAuth();
+</script>
+</body>
+</html>

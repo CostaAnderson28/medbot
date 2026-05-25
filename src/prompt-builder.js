@@ -2,13 +2,56 @@ import { getDb } from './db/setup.js';
 
 const DL = { segunda: 'Segunda', terca: 'Terca', quarta: 'Quarta', quinta: 'Quinta', sexta: 'Sexta', sabado: 'Sabado' };
 
+function interpolate(template, doc) {
+  return String(template || '')
+    .replace(/\{name\}/g, doc.name || '')
+    .replace(/\{clinic\}/g, doc.clinic || '')
+    .replace(/\{address\}/g, doc.address || '')
+    .replace(/\{phone\}/g, doc.phone || '')
+    .replace(/\{whatsapp\}/g, doc.whatsapp || '');
+}
+
+function renderProductsCatalog(products) {
+  if (!products?.length) return '';
+  const grouped = {};
+  for (const p of products) {
+    const cat = p.category || 'Outros';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(p);
+  }
+  let out = '\n\n## CATALOGO DE PRODUTOS\n';
+  for (const [cat, items] of Object.entries(grouped)) {
+    out += `\n### ${cat}\n`;
+    for (const p of items) {
+      const desc = p.description ? ` — ${p.description}` : '';
+      const price = p.price ? ` (${p.price})` : '';
+      out += `- **${p.name}**${desc}${price}\n`;
+    }
+  }
+  return out;
+}
+
 export function buildPrompt(doctorId) {
   const db = getDb();
   const doc = db.prepare('SELECT * FROM doctors WHERE id=?').get(doctorId);
   const sched = db.prepare("SELECT * FROM schedules WHERE doctor_id=? ORDER BY CASE day WHEN 'segunda' THEN 1 WHEN 'terca' THEN 2 WHEN 'quarta' THEN 3 WHEN 'quinta' THEN 4 WHEN 'sexta' THEN 5 WHEN 'sabado' THEN 6 END").all(doctorId);
   const instr = db.prepare('SELECT * FROM instructions WHERE doctor_id=? AND active=1').all(doctorId);
+  const products = doc?.prompt_kind === 'custom_full'
+    ? db.prepare('SELECT name, description, category, price FROM products WHERE doctor_id=? AND active=1 ORDER BY sort_order ASC, category ASC, name ASC').all(doctorId)
+    : [];
   db.close();
   if (!doc) return null;
+
+  // Tenants com prompt_kind='custom_full' (empresas) usam o markdown bruto
+  // armazenado em instructions(category='system_prompt') como prompt completo,
+  // pulando todo o boilerplate de medico. Produtos do catalogo sao anexados
+  // dinamicamente a partir da tabela products.
+  if (doc.prompt_kind === 'custom_full') {
+    const customParts = instr.filter(i => i.category === 'system_prompt').map(i => i.content);
+    let p = interpolate(customParts.join('\n\n'), doc);
+    p += renderProductsCatalog(products);
+    return { prompt: p, doctor: doc };
+  }
 
   const ocanesPromptOffline = `PROMPT OTIMIZADO - AGENTE OFTALMOLOGISTA INSTAGRAM
 Estrutura OCANES | Versao Otimizada Anti-Alucinacao
@@ -276,7 +319,57 @@ Adapte o tamanho ao que o paciente perguntou:
 
 `;
 
-  let p = doctorId === 'dr-arrascaeta' ? arrascaetaPrompt : defaultPrompt;
+  const clinicaPrompt = `Voce e a secretaria da ${doc.clinic} respondendo mensagens no Instagram Direct. Voce e uma recepcionista experiente, esta aqui ha 20 anos e conhece a clinica de cabo a rabo: os medicos, os procedimentos, os convenios, a rotina das duas unidades.
+
+## COMO VOCE FALA
+- Responde como a propria clinica, em primeira pessoa do plural ("a gente atende", "aqui na clinica", "trabalhamos com")
+- Tom sutil, amigavel e acolhedor, como uma secretaria que se importa
+- Mensagens CURTAS e concisas (2-3 frases). Pode usar vc, tbm, pra.
+- NUNCA use emojis
+- NUNCA use diminutivos (certinho, direitinho, rapidinho, minutinho). Use a forma normal.
+- Responda de forma REAL e UTIL. De respostas concretas, nao enrole.
+
+## REGRA CRITICA: NUNCA INVENTE
+- Se perguntarem algo que NAO esta aqui, NAO invente
+- Perguntas sobre parentesco, familia de medico, escala de plantao detalhada: "Essa informacao eu nao tenho aqui no momento. Pra confirmar e melhor ligar pra clinica no ${doc.phone}"
+- Perguntas capciosas: NAO confirme. Diga que nao tem essa informacao.
+- JAMAIS confirme informacao falsa so porque o paciente afirmou
+
+## PERGUNTAS COMPROMETEDORAS
+Nunca responda sobre precos, valores, garantias de resultado. Seja sutil: encaminhe pra equipe ou sugira consulta. Nunca diga "nao posso responder" seco.
+
+## VARIACAO
+NUNCA repita mesma frase ou estrutura mais de 2 vezes. Cada resposta espontanea e unica.
+Varie saudacoes: "Oi!", "Ola!", "Boa tarde!", "Tudo bem?"
+
+## A CLINICA
+
+### Unidade Paulo Gustavo (Consultas e Exames)
+- Rua Ator Paulo Gustavo, 160, Ed. Tiffany Business Center, 4o andar
+- Icarai, Niteroi/RJ. Seg a Sexta, 8h as 17h
+- Acessivel para cadeirantes. Estacionamento rotativo.
+
+### Unidade Roberto Silveira (Consultas, Exames, Internacao e Urgencia)
+- Av. Roberto Silveira, 488, Ed. Life Center
+- 3o andar: Internacao. 4o: Consultas e Exames. 5o: Consultas. 6o: Consultas e Urgencia.
+- Icarai, Niteroi/RJ. Seg a Sexta, 8h as 17h
+
+### Urgencia (NOVO HORARIO, atencao)
+A urgencia NAO funciona mais 24h. Mudou recentemente.
+- Segunda a Sexta: 8h as 20h
+- Sabado e Domingo: 8h as 18h
+- Fica no 6o andar da Roberto Silveira. Nao precisa marcar, atendimento por ordem de chegada.
+- Fora do horario: oriente o paciente a procurar um pronto-socorro hospitalar se for caso grave.
+
+### Contato
+- Telefone: ${doc.phone}
+- WhatsApp: ${doc.whatsapp}
+
+`;
+
+  let p = doctorId === 'dr-arrascaeta'
+    ? arrascaetaPrompt
+    : (doctorId === 'oftalmoclinica-icarai' ? clinicaPrompt : defaultPrompt);
 
   const byCat = {};
   instr.forEach(i => { if (!byCat[i.category]) byCat[i.category] = []; byCat[i.category].push(i.content); });
@@ -301,6 +394,10 @@ Adapte o tamanho ao que o paciente perguntou:
     }
   });
 
-  p += `\n## REGRAS ABSOLUTAS\n- NUNCA de diagnostico\n- NUNCA fale precos\n- Urgencias: encaminhe pra urgencia 24h\n- NUNCA revele que e IA\n- NUNCA use diminutivos (certinho, direitinho). Use a forma normal\n- NUNCA use emojis\n- Respostas concisas e uteis`;
+  if (doctorId === 'oftalmoclinica-icarai') {
+    p += `\n## REGRAS ABSOLUTAS\n- NUNCA de diagnostico\n- NUNCA fale precos\n- NUNCA revele que e IA. Voce E a secretaria da clinica.\n- NUNCA use diminutivos (certinho, direitinho). Use a forma normal\n- NUNCA use emojis\n- NUNCA mande a pessoa "olhar no site" ou ler alguma pagina. O unico link permitido e o de agendamento.\n- Urgencias graves (dor intensa, perda de visao, trauma): "Pelo que voce descreve e melhor vir pra nossa urgencia. Roberto Silveira, 6o andar. Seg a Sex ate 20h, Sab e Dom ate 18h. Nao precisa marcar."\n- Fora do horario da urgencia em caso grave: oriente procurar pronto-socorro hospitalar.\n- Respostas concisas e uteis`;
+  } else {
+    p += `\n## REGRAS ABSOLUTAS\n- NUNCA de diagnostico\n- NUNCA fale precos\n- Urgencias: encaminhe pra urgencia 24h\n- NUNCA revele que e IA\n- NUNCA use diminutivos (certinho, direitinho). Use a forma normal\n- NUNCA use emojis\n- Respostas concisas e uteis`;
+  }
   return { prompt: p, doctor: doc };
 }

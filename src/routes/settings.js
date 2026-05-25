@@ -8,7 +8,7 @@ router.get('/profile', (req, res) => {
   const doctorId = req.doctor?.id || req.doctorId;
   if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
   const db = getDb();
-  const doc = db.prepare('SELECT id,name,clinic,email,instagram_handle,phone,whatsapp,address,bot_active,delay_first,delay_min,delay_max FROM doctors WHERE id=?').get(doctorId);
+  const doc = db.prepare('SELECT id,name,clinic,email,instagram_handle,phone,whatsapp,address,bot_active,delay_first,delay_min,delay_max,prompt_kind,is_admin FROM doctors WHERE id=?').get(doctorId);
   db.close();
   res.json(doc);
 });

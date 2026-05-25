@@ -4,7 +4,12 @@ const SECRET_KEY = process.env.JWT_SECRET || 'sua_chave_secreta_muito_segura_aqu
 
 export function generateToken(doctor) {
   return jwt.sign(
-    { id: doctor.id, email: doctor.email, name: doctor.name },
+    {
+      id: doctor.id,
+      email: doctor.email,
+      name: doctor.name,
+      is_admin: doctor.is_admin ? 1 : 0
+    },
     SECRET_KEY,
     { expiresIn: '7d' }
   );
@@ -28,5 +33,20 @@ export function authMiddleware(req, res, next) {
   if (!decoded) return res.status(403).json({ error: 'Token inválido' });
 
   req.doctor = decoded;
+  next();
+}
+
+export function adminAuthMiddleware(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: 'Token não fornecido' });
+
+  const decoded = verifyToken(token);
+  if (!decoded) return res.status(403).json({ error: 'Token inválido' });
+  if (!decoded.is_admin) return res.status(403).json({ error: 'Acesso restrito a administradores' });
+
+  req.doctor = decoded;
+  req.admin = decoded;
   next();
 }
