@@ -8,8 +8,16 @@ router.use(authMiddleware);
 // Cliente nunca ve nem mexe aqui.
 const PROTECTED_CATEGORIES = new Set(['system_prompt']);
 
+// Admin pode operar em qualquer tenant passando ?doctor_id=X (ou no body).
+// Cliente normal sempre usa o proprio req.doctor.id.
+function resolveDoctorId(req) {
+  if (req.doctor?.is_admin && req.query.doctor_id) return String(req.query.doctor_id);
+  if (req.doctor?.is_admin && req.body?.doctor_id) return String(req.body.doctor_id);
+  return req.doctor?.id || req.doctorId || null;
+}
+
 router.get('/', (req, res) => {
-  const doctorId = req.doctor?.id || req.doctorId;
+  const doctorId = resolveDoctorId(req);
   if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
   const db = getDb();
   const r = db.prepare("SELECT * FROM instructions WHERE doctor_id=? AND category != 'system_prompt'").all(doctorId);
@@ -21,7 +29,7 @@ router.post('/', (req, res) => {
   const { category, content } = req.body;
   if (!category || !content) return res.status(400).json({ error: 'Categoria e conteudo obrigatorios' });
   if (PROTECTED_CATEGORIES.has(String(category))) return res.status(403).json({ error: 'Categoria reservada ao admin' });
-  const doctorId = req.doctor?.id || req.doctorId;
+  const doctorId = resolveDoctorId(req);
   if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
   const db = getDb();
   const r = db.prepare('INSERT INTO instructions (doctor_id,category,content) VALUES(?,?,?)').run(doctorId, category, content);
@@ -31,10 +39,9 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   const { content, active } = req.body;
-  const doctorId = req.doctor?.id || req.doctorId;
+  const doctorId = resolveDoctorId(req);
   if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
   const db = getDb();
-  // Garante que o cliente nao edite system_prompt mesmo passando o ID dele
   const existing = db.prepare('SELECT category FROM instructions WHERE id=? AND doctor_id=?').get(req.params.id, doctorId);
   if (!existing) { db.close(); return res.status(404).json({ error: 'Instrucao nao encontrada' }); }
   if (PROTECTED_CATEGORIES.has(existing.category)) { db.close(); return res.status(403).json({ error: 'Categoria reservada ao admin' }); }
@@ -45,7 +52,7 @@ router.put('/:id', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
-  const doctorId = req.doctor?.id || req.doctorId;
+  const doctorId = resolveDoctorId(req);
   if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
   const db = getDb();
   const existing = db.prepare('SELECT category FROM instructions WHERE id=? AND doctor_id=?').get(req.params.id, doctorId);

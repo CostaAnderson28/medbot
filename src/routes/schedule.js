@@ -4,8 +4,15 @@ import { authMiddleware } from '../middleware/auth.js';
 const router = Router();
 router.use(authMiddleware);
 
+// Admin pode operar em qualquer tenant passando ?doctor_id=X (ou no body).
+function resolveDoctorId(req) {
+  if (req.doctor?.is_admin && req.query.doctor_id) return String(req.query.doctor_id);
+  if (req.doctor?.is_admin && req.body?.doctor_id) return String(req.body.doctor_id);
+  return req.doctor?.id || req.doctorId || null;
+}
+
 router.get('/', (req, res) => {
-  const doctorId = req.doctor?.id || req.doctorId;
+  const doctorId = resolveDoctorId(req);
   if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
   const db = getDb();
   const r = db.prepare("SELECT * FROM schedules WHERE doctor_id=? ORDER BY CASE day WHEN 'segunda' THEN 1 WHEN 'terca' THEN 2 WHEN 'quarta' THEN 3 WHEN 'quinta' THEN 4 WHEN 'sexta' THEN 5 WHEN 'sabado' THEN 6 END").all(doctorId);
@@ -15,7 +22,7 @@ router.get('/', (req, res) => {
 
 router.put('/:day', (req, res) => {
   const { morning_start, morning_end, afternoon_start, afternoon_end, location, notes } = req.body;
-  const doctorId = req.doctor?.id || req.doctorId;
+  const doctorId = resolveDoctorId(req);
   if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
   const db = getDb();
   db.prepare('INSERT INTO schedules (doctor_id,day,morning_start,morning_end,afternoon_start,afternoon_end,location,notes) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(doctor_id,day) DO UPDATE SET morning_start=excluded.morning_start,morning_end=excluded.morning_end,afternoon_start=excluded.afternoon_start,afternoon_end=excluded.afternoon_end,location=excluded.location,notes=excluded.notes')

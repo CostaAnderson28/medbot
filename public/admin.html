@@ -59,6 +59,17 @@ tr:hover td{background:#fafbfc}
 .modal .box{background:#fff;border-radius:14px;padding:24px;width:100%;max-width:680px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .modal h2{font-size:18px;margin-bottom:18px}
 .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;border-top:1px solid #f0f0f0;padding-top:14px}
+.tab-btn{background:none;border:none;padding:9px 14px;font-size:13px;font-weight:600;color:#7b8a9f;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit}
+.tab-btn:hover{color:#1a2a3a}
+.tab-btn.active{color:#1e3a5f;border-bottom-color:#1e3a5f}
+.tab-pane{}
+.admin-instr-item{display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid #eef2f6;border-radius:8px;margin-bottom:8px;background:#fafbfc}
+.admin-instr-cat{background:#e8f0fe;color:#1e3a5f;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap;margin-top:2px}
+.admin-instr-text{flex:1;font-size:12px;line-height:1.5;white-space:pre-wrap;color:#333}
+.admin-sched-row{display:grid;grid-template-columns:90px 1fr 1fr 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #f0f0f0}
+.admin-sched-row .day{font-weight:600;font-size:12px}
+.admin-sched-row .sm{font-size:9px;color:#aaa;margin-bottom:2px}
+.admin-sched-row input{padding:5px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;outline:none;font-family:inherit;width:100%}
 .page{display:none}.page.active{display:block}
 .empty{text-align:center;padding:40px 20px;color:#aaa;font-size:13px}
 </style>
@@ -140,8 +151,17 @@ tr:hover td{background:#fafbfc}
 
 <!-- Modal de detalhe / edição -->
 <div class="modal" id="detailModal">
-<div class="box">
+<div class="box" style="max-width:880px">
 <h2 id="dTitle">Detalhe</h2>
+<div class="tabs" style="display:flex;gap:4px;border-bottom:1px solid #e6ebf2;margin-bottom:16px;flex-wrap:wrap">
+<button class="tab-btn active" data-tab="dados" onclick="showTab('dados')">Dados</button>
+<button class="tab-btn" data-tab="prompt" onclick="showTab('prompt')">System Prompt</button>
+<button class="tab-btn" data-tab="instr" onclick="showTab('instr')">Instruções</button>
+<button class="tab-btn" data-tab="prods" onclick="showTab('prods')">Produtos</button>
+<button class="tab-btn" data-tab="agenda" onclick="showTab('agenda')">Agenda</button>
+</div>
+
+<div class="tab-pane active" id="tab-dados">
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
 <div class="field"><label>Nome</label><input id="dName"></div>
 <div class="field"><label>Clínica / Empresa</label><input id="dClinic"></div>
@@ -161,13 +181,56 @@ tr:hover td{background:#fafbfc}
 <div class="field"><label>WhatsApp</label><input id="dWpp"></div>
 </div>
 <div class="field"><label>Endereço</label><input id="dAddr"></div>
-<div class="field"><label>System prompt (custom_full) / persona base</label><textarea id="dPrompt" placeholder="(deixe vazio se não usar custom_full)"></textarea></div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
 <div class="field"><label>Nova senha (opcional)</label><input id="dPass" placeholder="deixe em branco pra manter"></div>
 </div>
+</div>
+
+<div class="tab-pane" id="tab-prompt" style="display:none">
+<p style="font-size:12px;color:#888;margin-bottom:8px">Markdown completo da persona/regras. Editado SOMENTE pelo admin. Cliente nunca vê.</p>
+<div class="field"><textarea id="dPrompt" rows="20" style="min-height:400px;font-family:monospace;font-size:12px"></textarea></div>
+</div>
+
+<div class="tab-pane" id="tab-instr" style="display:none">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><p style="font-size:12px;color:#888;margin:0">Instruções por categoria — anexadas ao prompt em cada mensagem.</p><button class="btn btn-sm btn-outline" onclick="adminShowInstrForm()">+ Nova</button></div>
+<div id="adminInstrList">Carregando...</div>
+<div id="adminInstrForm" style="display:none;border-top:1px solid #e6ebf2;padding-top:12px;margin-top:12px">
+<h3 id="adminInstrFormTitle" style="font-size:14px;margin-bottom:8px">Adicionar instrução</h3>
+<input type="hidden" id="adminInstrEditId">
+<div class="field"><label>Categoria</label><select id="adminInstrCat"><option value="memoria">Memória</option><option value="convenios">Convênios</option><option value="procedimentos">Procedimentos</option><option value="pos_operatorio">Pós-operatório</option><option value="agendamento">Agendamento</option><option value="personalizado">Personalizado</option></select></div>
+<div class="field"><label>Conteúdo</label><textarea id="adminInstrContent" rows="5" style="min-height:100px"></textarea></div>
+<div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="adminInstrSave()">Salvar</button><button class="btn btn-sm btn-danger" onclick="adminInstrCancel()">Cancelar</button></div>
+</div>
+</div>
+
+<div class="tab-pane" id="tab-prods" style="display:none">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><p style="font-size:12px;color:#888;margin:0">Produtos do catálogo — renderizados no prompt automaticamente.</p><button class="btn btn-sm btn-outline" onclick="adminShowProdForm()">+ Novo</button></div>
+<div id="adminProdList">Carregando...</div>
+<div id="adminProdForm" style="display:none;border-top:1px solid #e6ebf2;padding-top:12px;margin-top:12px">
+<h3 id="adminProdFormTitle" style="font-size:14px;margin-bottom:8px">Adicionar produto</h3>
+<input type="hidden" id="adminProdEditId">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Nome</label><input id="adminProdName"></div>
+<div class="field"><label>Categoria</label><input id="adminProdCategory"></div>
+</div>
+<div class="field"><label>Descrição</label><textarea id="adminProdDescription" rows="3"></textarea></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="field"><label>Preço</label><input id="adminProdPrice" placeholder="sob consulta / R$ 99,00"></div>
+<div class="field"><label>Ordem</label><input type="number" id="adminProdSort" value="0"></div>
+</div>
+<div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="adminProdSave()">Salvar</button><button class="btn btn-sm btn-danger" onclick="adminProdCancel()">Cancelar</button></div>
+</div>
+</div>
+
+<div class="tab-pane" id="tab-agenda" style="display:none">
+<p style="font-size:12px;color:#888;margin-bottom:12px">Horários semanais. Deixe vazio se não atender o turno. Bot usa pra responder a pacientes.</p>
+<div id="adminScheduleGrid"></div>
+<div style="margin-top:12px"><button class="btn btn-sm btn-primary" onclick="adminScheduleSave()">Salvar agenda</button></div>
+</div>
+
 <div class="actions">
-<button class="btn btn-sm btn-danger" onclick="closeDetail()">Cancelar</button>
-<button class="btn btn-sm btn-primary" onclick="saveDetail()">Salvar alterações</button>
+<button class="btn btn-sm btn-danger" onclick="closeDetail()">Fechar</button>
+<button class="btn btn-sm btn-primary" onclick="saveDetail()">Salvar dados + prompt + senha</button>
 </div>
 </div>
 </div>
@@ -273,10 +336,192 @@ async function openDetail(id){
   document.getElementById('dPass').value='';
   var sp=await api('/admin/tenants/'+id+'/system-prompt');
   document.getElementById('dPrompt').value=(sp&&sp.content)||'';
+  showTab('dados');
+  loadAdminInstructions();
+  loadAdminProducts();
+  loadAdminSchedule();
   document.getElementById('detailModal').classList.add('show');
 }
 
 function closeDetail(){document.getElementById('detailModal').classList.remove('show');editingId=null}
+
+function showTab(name){
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===name)});
+  document.querySelectorAll('.tab-pane').forEach(function(p){p.style.display=p.id==='tab-'+name?'block':'none'});
+}
+
+// ========== INSTRUCTIONS (admin operando em qualquer tenant via ?doctor_id=) ==========
+
+async function loadAdminInstructions(){
+  if(!editingId){return}
+  var rows=await api('/instructions?doctor_id='+encodeURIComponent(editingId));
+  if(!Array.isArray(rows)){document.getElementById('adminInstrList').innerHTML='<div style="color:#aaa;font-size:12px">Falha ao carregar</div>';return}
+  window.__adminInstructions=rows;
+  if(!rows.length){document.getElementById('adminInstrList').innerHTML='<div style="color:#aaa;font-size:12px;padding:20px;text-align:center">Nenhuma instrução. Clique em "+ Nova" pra adicionar.</div>';return}
+  document.getElementById('adminInstrList').innerHTML=rows.map(function(r){
+    var inactive=r.active?'':'opacity:.5;';
+    return '<div class="admin-instr-item" style="'+inactive+'"><span class="admin-instr-cat">'+r.category+'</span><div class="admin-instr-text">'+escapeHtml(r.content)+'</div><div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0"><button class="btn btn-sm btn-outline" onclick="adminInstrEdit('+r.id+')">Editar</button><button class="btn btn-sm" style="background:'+(r.active?'#e8f5e9':'#fee')+';color:'+(r.active?'#2e7d32':'#888')+'" onclick="adminInstrToggle('+r.id+','+(r.active?0:1)+')">'+(r.active?'Ativo':'Inativo')+'</button><button class="btn btn-sm btn-danger" onclick="adminInstrDelete('+r.id+')">×</button></div></div>';
+  }).join('');
+}
+
+function adminShowInstrForm(){
+  document.getElementById('adminInstrEditId').value='';
+  document.getElementById('adminInstrFormTitle').textContent='Adicionar instrução';
+  document.getElementById('adminInstrCat').value='memoria';
+  document.getElementById('adminInstrCat').disabled=false;
+  document.getElementById('adminInstrContent').value='';
+  document.getElementById('adminInstrForm').style.display='block';
+}
+
+function adminInstrEdit(id){
+  var instr=(window.__adminInstructions||[]).find(function(x){return x.id===id});
+  if(!instr)return;
+  document.getElementById('adminInstrEditId').value=String(id);
+  document.getElementById('adminInstrFormTitle').textContent='Editar instrução';
+  document.getElementById('adminInstrCat').value=instr.category;
+  document.getElementById('adminInstrCat').disabled=true;
+  document.getElementById('adminInstrContent').value=instr.content||'';
+  document.getElementById('adminInstrForm').style.display='block';
+  document.getElementById('adminInstrForm').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function adminInstrCancel(){
+  document.getElementById('adminInstrForm').style.display='none';
+  document.getElementById('adminInstrEditId').value='';
+  document.getElementById('adminInstrContent').value='';
+  document.getElementById('adminInstrCat').disabled=false;
+}
+
+async function adminInstrSave(){
+  var id=document.getElementById('adminInstrEditId').value;
+  var content=document.getElementById('adminInstrContent').value.trim();
+  if(!content){toast('Conteúdo vazio',true);return}
+  var path=id ? '/instructions/'+id+'?doctor_id='+encodeURIComponent(editingId) : '/instructions?doctor_id='+encodeURIComponent(editingId);
+  var body=id ? {content:content} : {category:document.getElementById('adminInstrCat').value,content:content};
+  var r=await api(path,{method:id?'PUT':'POST',body:JSON.stringify(body)});
+  if(r&&(r.ok||r.id)){toast(id?'Atualizado':'Adicionado');adminInstrCancel();loadAdminInstructions()}
+  else toast('Erro ao salvar',true);
+}
+
+async function adminInstrToggle(id,active){
+  var r=await api('/instructions/'+id+'?doctor_id='+encodeURIComponent(editingId),{method:'PUT',body:JSON.stringify({active:active})});
+  if(r&&r.ok){loadAdminInstructions()}
+}
+
+async function adminInstrDelete(id){
+  if(!confirm('Remover esta instrução?'))return;
+  var r=await api('/instructions/'+id+'?doctor_id='+encodeURIComponent(editingId),{method:'DELETE'});
+  if(r&&r.ok){toast('Removida');loadAdminInstructions()}
+}
+
+// ========== PRODUCTS ==========
+
+async function loadAdminProducts(){
+  if(!editingId)return;
+  var rows=await api('/products?doctor_id='+encodeURIComponent(editingId));
+  if(!Array.isArray(rows)){document.getElementById('adminProdList').innerHTML='<div style="color:#aaa;font-size:12px">Falha ao carregar</div>';return}
+  window.__adminProducts=rows;
+  if(!rows.length){document.getElementById('adminProdList').innerHTML='<div style="color:#aaa;font-size:12px;padding:20px;text-align:center">Nenhum produto. Clique em "+ Novo" pra adicionar.</div>';return}
+  var grouped={};rows.forEach(function(p){var c=p.category||'Outros';(grouped[c]=grouped[c]||[]).push(p)});
+  var html='';
+  Object.keys(grouped).forEach(function(cat){
+    html+='<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:#1e3a5f;text-transform:uppercase;margin-bottom:6px">'+escapeHtml(cat)+'</div>';
+    grouped[cat].forEach(function(p){
+      var inactive=p.active?'':'opacity:.5;';
+      var price=p.price?'<span style="color:#888;font-size:11px;margin-left:8px">('+escapeHtml(p.price)+')</span>':'';
+      var desc=p.description?'<div style="font-size:11px;color:#666;margin-top:2px">'+escapeHtml(p.description)+'</div>':'';
+      html+='<div class="admin-instr-item" style="'+inactive+'"><div style="flex:1"><div style="font-size:13px;font-weight:600">'+escapeHtml(p.name)+price+'</div>'+desc+'</div><div style="display:flex;gap:4px;flex-shrink:0"><button class="btn btn-sm btn-outline" onclick="adminProdEdit('+p.id+')">Editar</button><button class="btn btn-sm btn-danger" onclick="adminProdDelete('+p.id+')">×</button></div></div>';
+    });
+    html+='</div>';
+  });
+  document.getElementById('adminProdList').innerHTML=html;
+}
+
+function adminShowProdForm(){
+  document.getElementById('adminProdEditId').value='';
+  document.getElementById('adminProdFormTitle').textContent='Adicionar produto';
+  ['adminProdName','adminProdCategory','adminProdDescription','adminProdPrice'].forEach(function(i){document.getElementById(i).value=''});
+  document.getElementById('adminProdSort').value='0';
+  document.getElementById('adminProdForm').style.display='block';
+}
+
+function adminProdEdit(id){
+  var p=(window.__adminProducts||[]).find(function(x){return x.id===id});
+  if(!p)return;
+  document.getElementById('adminProdEditId').value=String(id);
+  document.getElementById('adminProdFormTitle').textContent='Editar produto';
+  document.getElementById('adminProdName').value=p.name||'';
+  document.getElementById('adminProdCategory').value=p.category||'';
+  document.getElementById('adminProdDescription').value=p.description||'';
+  document.getElementById('adminProdPrice').value=p.price||'';
+  document.getElementById('adminProdSort').value=p.sort_order||0;
+  document.getElementById('adminProdForm').style.display='block';
+  document.getElementById('adminProdForm').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function adminProdCancel(){document.getElementById('adminProdForm').style.display='none'}
+
+async function adminProdSave(){
+  var id=document.getElementById('adminProdEditId').value;
+  var body={
+    name:document.getElementById('adminProdName').value.trim(),
+    category:document.getElementById('adminProdCategory').value.trim()||null,
+    description:document.getElementById('adminProdDescription').value.trim()||null,
+    price:document.getElementById('adminProdPrice').value.trim()||null,
+    sort_order:Number(document.getElementById('adminProdSort').value)||0
+  };
+  if(!body.name){toast('Nome obrigatório',true);return}
+  var path=id?'/products/'+id+'?doctor_id='+encodeURIComponent(editingId):'/products?doctor_id='+encodeURIComponent(editingId);
+  var r=await api(path,{method:id?'PUT':'POST',body:JSON.stringify(body)});
+  if(r&&r.id){toast(id?'Atualizado':'Adicionado');adminProdCancel();loadAdminProducts()}
+  else toast('Erro ao salvar',true);
+}
+
+async function adminProdDelete(id){
+  if(!confirm('Remover produto?'))return;
+  var r=await api('/products/'+id+'?doctor_id='+encodeURIComponent(editingId),{method:'DELETE'});
+  if(r&&r.ok){toast('Removido');loadAdminProducts()}
+}
+
+// ========== SCHEDULE ==========
+
+var ADMIN_DAYS=[['segunda','Segunda'],['terca','Terça'],['quarta','Quarta'],['quinta','Quinta'],['sexta','Sexta'],['sabado','Sábado']];
+
+async function loadAdminSchedule(){
+  if(!editingId)return;
+  var rows=await api('/schedule?doctor_id='+encodeURIComponent(editingId));
+  var byDay={};(rows||[]).forEach(function(r){byDay[r.day]=r});
+  document.getElementById('adminScheduleGrid').innerHTML=ADMIN_DAYS.map(function(d){
+    var r=byDay[d[0]]||{};
+    return '<div class="admin-sched-row" data-day="'+d[0]+'">'+
+      '<div class="day">'+d[1]+'</div>'+
+      '<div><div class="sm">Manhã início → fim</div><div style="display:flex;gap:4px"><input type="time" class="ms" value="'+(r.morning_start||'')+'"><input type="time" class="me" value="'+(r.morning_end||'')+'"></div></div>'+
+      '<div><div class="sm">Tarde início → fim</div><div style="display:flex;gap:4px"><input type="time" class="as" value="'+(r.afternoon_start||'')+'"><input type="time" class="ae" value="'+(r.afternoon_end||'')+'"></div></div>'+
+      '<div><div class="sm">Local</div><input type="text" class="loc" value="'+escapeHtml(r.location||'')+'" placeholder="Ex: Unidade X"></div>'+
+      '</div>';
+  }).join('');
+}
+
+async function adminScheduleSave(){
+  var rows=document.querySelectorAll('#adminScheduleGrid .admin-sched-row');
+  var failed=0;
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i];
+    var day=row.dataset.day;
+    var body={
+      morning_start:row.querySelector('.ms').value||null,
+      morning_end:row.querySelector('.me').value||null,
+      afternoon_start:row.querySelector('.as').value||null,
+      afternoon_end:row.querySelector('.ae').value||null,
+      location:row.querySelector('.loc').value||null
+    };
+    var r=await api('/schedule/'+day+'?doctor_id='+encodeURIComponent(editingId),{method:'PUT',body:JSON.stringify(body)});
+    if(!r||!r.ok)failed++;
+  }
+  if(failed===0)toast('Agenda salva');
+  else toast(failed+' dia(s) falharam',true);
+}
+
 
 async function saveDetail(){
   if(!editingId)return;
