@@ -169,10 +169,11 @@ body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-heigh
 <div id="instrList">Carregando...</div>
 </div>
 <div class="section" id="addInstrBox" style="display:none">
-<h3>Adicionar instrução</h3>
+<h3 id="instrFormTitle">Adicionar instrução</h3>
+<input type="hidden" id="editInstrId">
 <div class="field"><label>Categoria</label><select id="newInstrCat"><option value="memoria">Memória</option><option value="convenios">Convênios</option><option value="procedimentos">Procedimentos</option><option value="pos_operatorio">Pós-operatório</option><option value="agendamento">Agendamento</option><option value="personalizado">Personalizado</option></select></div>
-<div class="field"><label>Conteúdo</label><textarea id="newInstrContent" placeholder="Escreva a instrução..."></textarea></div>
-<div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="addInstr()" style="width:auto">Adicionar</button><button class="btn btn-sm btn-danger" onclick="document.getElementById('addInstrBox').style.display='none'">Cancelar</button></div>
+<div class="field"><label>Conteúdo</label><textarea id="newInstrContent" placeholder="Escreva a instrução..." rows="6" style="min-height:120px"></textarea></div>
+<div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" id="instrSaveBtn" onclick="saveInstr()" style="width:auto">Adicionar</button><button class="btn btn-sm btn-danger" onclick="cancelInstr()">Cancelar</button></div>
 </div>
 </div>
 
@@ -477,13 +478,57 @@ async function saveSchedule(){
 
 async function loadInstructions(){
   var rows=await api('/instructions');if(!rows)return;
+  window.__instructions=rows;
   if(!rows.length){document.getElementById('instrList').innerHTML='<div style="color:#aaa">Nenhuma instrução</div>';return}
   document.getElementById('instrList').innerHTML=rows.map(function(r){
-    return '<div class="instr-item"><span class="instr-cat">'+(CAT_LABELS[r.category]||r.category)+'</span><div class="instr-text" style="color:'+(r.active?'#333':'#bbb')+'">'+r.content.replace(/\n/g,'<br>')+'</div><label class="toggle" style="flex-shrink:0"><input type="checkbox" '+(r.active?'checked':'')+' onchange="toggleInstr('+r.id+',this.checked)"><span class="slider"></span></label><button class="btn btn-sm btn-danger" onclick="deleteInstr('+r.id+')">×</button></div>'
+    return '<div class="instr-item"><span class="instr-cat">'+(CAT_LABELS[r.category]||r.category)+'</span><div class="instr-text" style="color:'+(r.active?'#333':'#bbb')+'">'+escapeHtml(r.content).replace(/\n/g,'<br>')+'</div><label class="toggle" style="flex-shrink:0"><input type="checkbox" '+(r.active?'checked':'')+' onchange="toggleInstr('+r.id+',this.checked)"><span class="slider"></span></label><button class="btn btn-sm btn-outline" onclick="editInstr('+r.id+')" style="margin-right:4px">Editar</button><button class="btn btn-sm btn-danger" onclick="deleteInstr('+r.id+')">×</button></div>'
   }).join('');
 }
-function showAddInstr(){document.getElementById('addInstrBox').style.display='block'}
-async function addInstr(){var cat=document.getElementById('newInstrCat').value;var content=document.getElementById('newInstrContent').value;if(!content)return;await api('/instructions',{method:'POST',body:JSON.stringify({category:cat,content:content})});document.getElementById('newInstrContent').value='';document.getElementById('addInstrBox').style.display='none';loadInstructions();toast('Instrução adicionada!')}
+function showAddInstr(){
+  document.getElementById('editInstrId').value='';
+  document.getElementById('instrFormTitle').textContent='Adicionar instrução';
+  document.getElementById('instrSaveBtn').textContent='Adicionar';
+  document.getElementById('newInstrContent').value='';
+  document.getElementById('newInstrCat').disabled=false;
+  document.getElementById('newInstrCat').value='memoria';
+  document.getElementById('addInstrBox').style.display='block';
+  document.getElementById('newInstrContent').focus();
+}
+function editInstr(id){
+  var instr=(window.__instructions||[]).find(function(x){return x.id===id});
+  if(!instr){toast('Instrução não encontrada');return}
+  document.getElementById('editInstrId').value=String(id);
+  document.getElementById('instrFormTitle').textContent='Editar instrução';
+  document.getElementById('instrSaveBtn').textContent='Salvar';
+  document.getElementById('newInstrContent').value=instr.content||'';
+  // Categoria nao pode mudar via PUT (so via delete+create). Trava o select.
+  document.getElementById('newInstrCat').value=instr.category;
+  document.getElementById('newInstrCat').disabled=true;
+  document.getElementById('addInstrBox').style.display='block';
+  document.getElementById('addInstrBox').scrollIntoView({behavior:'smooth',block:'nearest'});
+  document.getElementById('newInstrContent').focus();
+}
+function cancelInstr(){
+  document.getElementById('addInstrBox').style.display='none';
+  document.getElementById('newInstrContent').value='';
+  document.getElementById('editInstrId').value='';
+  document.getElementById('newInstrCat').disabled=false;
+}
+async function saveInstr(){
+  var id=document.getElementById('editInstrId').value;
+  var content=document.getElementById('newInstrContent').value.trim();
+  if(!content){toast('Conteúdo vazio');return}
+  if(id){
+    var r=await api('/instructions/'+id,{method:'PUT',body:JSON.stringify({content:content})});
+    if(r&&r.ok){toast('Instrução atualizada');cancelInstr();loadInstructions()}
+    else toast('Erro ao salvar');
+  }else{
+    var cat=document.getElementById('newInstrCat').value;
+    var r=await api('/instructions',{method:'POST',body:JSON.stringify({category:cat,content:content})});
+    if(r&&r.id){toast('Instrução adicionada');cancelInstr();loadInstructions()}
+    else toast('Erro ao adicionar');
+  }
+}
 async function toggleInstr(id,active){await api('/instructions/'+id,{method:'PUT',body:JSON.stringify({active:active})})}
 async function deleteInstr(id){if(confirm('Remover?')){await api('/instructions/'+id,{method:'DELETE'});loadInstructions()}}
 
