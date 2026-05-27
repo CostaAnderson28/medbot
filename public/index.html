@@ -540,7 +540,7 @@ async function sendSim(){
   simInp.value='';simSendBtn.style.display='none';
   simShowTyping();
   try{
-    var res=await api('/chat',{method:'POST',body:JSON.stringify({messages:simHistory})});
+    var res=await api('/chat',{method:'POST',body:JSON.stringify({messages:simHistory,doctorId:DOCTOR&&DOCTOR.id})});
     simHideTyping();
     var reply=(res&&res.reply)?res.reply:'Tive uma dificuldade. Liga: (21) 2703-6100.';
     simAddMsg('assistant',reply);
