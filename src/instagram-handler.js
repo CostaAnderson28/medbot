@@ -243,16 +243,33 @@ function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', mess
   // quando incluir link/CTA. Stripping global removia links uteis quando o cliente
   // pedia explicitamente (ex.: "mande link em respostas sobre retinopatia").
 
+  const URL_RE = /https?:\/\/\S+/;
+
   const sentenceChunks = text
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())
     .filter(Boolean);
 
   if (sentenceChunks.length > MAX_REPLY_SENTENCES) {
-    text = sentenceChunks.slice(0, MAX_REPLY_SENTENCES).join(' ').trim();
+    // Preserva sempre sentencas com URL (sao estruturais, nao podem ser cortadas).
+    const urlIdx = sentenceChunks
+      .map((s, i) => URL_RE.test(s) ? i : -1)
+      .filter(i => i >= 0);
+
+    if (urlIdx.length) {
+      const kept = new Set(urlIdx);
+      // Completa com as primeiras sentencas ate atingir o limite
+      for (let i = 0; i < sentenceChunks.length && kept.size < MAX_REPLY_SENTENCES; i++) {
+        kept.add(i);
+      }
+      text = sentenceChunks.filter((_, i) => kept.has(i)).join(' ').trim();
+    } else {
+      text = sentenceChunks.slice(0, MAX_REPLY_SENTENCES).join(' ').trim();
+    }
   }
 
-  if (text.length > MAX_REPLY_CHARS) {
+  // Cap de chars: nao aplica se tem URL (clipping quebraria o link no meio).
+  if (text.length > MAX_REPLY_CHARS && !URL_RE.test(text)) {
     const clipped = text.slice(0, MAX_REPLY_CHARS);
     const breakAt = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('? '), clipped.lastIndexOf('! '));
     text = (breakAt > 80 ? clipped.slice(0, breakAt + 1) : clipped).trim();
