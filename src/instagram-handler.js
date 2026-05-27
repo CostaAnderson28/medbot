@@ -608,6 +608,21 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
     const traceId = `${doctorId}:${senderId}:${Date.now()}`;
     console.log('[Instagram][inbound]', { traceId, doctorId, senderId, mid, userChars: userMessage.length, ...getLogTimeContext() });
 
+    // Verifica se o bot esta pausado pra esta conversa especifica.
+    // Se sim, salva a mensagem do usuario no historico mas NAO responde.
+    {
+      const dbCheck = getDb();
+      const convCheck = dbCheck.prepare('SELECT id, bot_paused FROM conversations WHERE doctor_id=? AND sender_id=? ORDER BY started_at DESC LIMIT 1').get(doctorId, senderId);
+      dbCheck.close();
+      if (convCheck && convCheck.bot_paused === 1) {
+        console.log('[Instagram][bot_paused_skip]', { traceId, doctorId, senderId, conversationId: convCheck.id, ...getLogTimeContext() });
+        // Salva a mensagem do usuario pra manter historico atualizado
+        const profile = await fetchInstagramProfile(senderId, doctorId);
+        trackConversation(doctorId, senderId, 'user', userMessage, profile);
+        return null;
+      }
+    }
+
     // Busca prompt do médico
     const result = buildPrompt(doctorId);
     if (!result) {

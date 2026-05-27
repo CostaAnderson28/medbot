@@ -580,7 +580,8 @@ app.get('/api/conversations', authMiddleware, async (req, res) => {
         st: status,
         date: new Date(conv.started_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
         msgs: msgs,
-        user_msg_count: conv.user_msg_count
+        user_msg_count: conv.user_msg_count,
+        bot_paused: conv.bot_paused ? 1 : 0
       };
     });
 
@@ -636,6 +637,36 @@ app.post('/api/conversations/:id/manual-message', authMiddleware, async (req, re
     return res.status(500).json({ error: 'Erro interno ao enviar mensagem' });
   }
 });
+
+// Pausar/despausar bot pra uma conversa especifica
+app.put('/api/conversations/:id/pause', authMiddleware, (req, res) => {
+  const doctorId = req.doctor?.id;
+  if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
+  const conversationId = Number(req.params.id);
+  if (!conversationId) return res.status(400).json({ error: 'ID invalido' });
+  const paused = req.body?.paused ? 1 : 0;
+  const db = getDb();
+  const r = db.prepare('UPDATE conversations SET bot_paused=? WHERE id=? AND doctor_id=?').run(paused, conversationId, doctorId);
+  db.close();
+  if (!r.changes) return res.status(404).json({ error: 'Conversa nao encontrada' });
+  return res.json({ bot_paused: paused });
+});
+
+// Zerar contexto: apaga mensagens da conversa, mantem lead_name/instagram_username
+app.post('/api/conversations/:id/clear-context', authMiddleware, (req, res) => {
+  const doctorId = req.doctor?.id;
+  if (!doctorId) return res.status(401).json({ error: 'Nao autenticado' });
+  const conversationId = Number(req.params.id);
+  if (!conversationId) return res.status(400).json({ error: 'ID invalido' });
+  const db = getDb();
+  const conv = db.prepare('SELECT id FROM conversations WHERE id=? AND doctor_id=?').get(conversationId, doctorId);
+  if (!conv) { db.close(); return res.status(404).json({ error: 'Conversa nao encontrada' }); }
+  const r = db.prepare('DELETE FROM messages WHERE conversation_id=?').run(conversationId);
+  db.prepare('UPDATE conversations SET message_count=0, link_sent=0, whatsapp_redirect=0, urgency=0 WHERE id=?').run(conversationId);
+  db.close();
+  return res.json({ ok: true, messages_deleted: r.changes });
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 app.get('*', (req, res) => { if (!req.path.startsWith('/api')) res.sendFile(join(__dirname, '..', 'public', 'index.html')); });
 app.listen(PORT, () => console.log('Servidor rodando em http://localhost:' + PORT));

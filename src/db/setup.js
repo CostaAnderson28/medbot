@@ -214,6 +214,10 @@ export function setupDatabase() {
   if (!hasInstagramUsername) {
     db.exec('ALTER TABLE conversations ADD COLUMN instagram_username TEXT');
   }
+  const hasBotPaused = convColumns.some(c => c.name === 'bot_paused');
+  if (!hasBotPaused) {
+    db.exec('ALTER TABLE conversations ADD COLUMN bot_paused INTEGER DEFAULT 0');
+  }
 
   const doctorColumns = db.prepare("PRAGMA table_info(doctors)").all();
   const hasPromptKind = doctorColumns.some(c => c.name === 'prompt_kind');
