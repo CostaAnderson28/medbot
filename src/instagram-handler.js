@@ -210,67 +210,6 @@ function stripTemporalAssistantHistory(messages) {
   return { messages: filtered, removed };
 }
 
-function normalizeText(text) {
-  return String(text || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s:/.-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function hasAnyKeyword(text, keywords) {
-  const n = normalizeText(text);
-  return keywords.some(k => n.includes(k));
-}
-
-function findMatchedKeywords(text, keywords) {
-  const n = normalizeText(text);
-  return keywords.filter(k => n.includes(k));
-}
-
-function shouldKeepCta({ userMessage = '', messages = [] } = {}) {
-  const user = String(userMessage || '');
-  const recentUserText = (Array.isArray(messages) ? messages : [])
-    .filter(m => m?.role === 'user' && typeof m?.content === 'string')
-    .slice(-3)
-    .map(m => m.content)
-    .join(' ');
-  const combinedUserIntent = `${recentUserText} ${user}`;
-
-  const schedulingIntent = [
-    'agendar', 'agendamento', 'consulta', 'marcar', 'agenda', 'horario', 'horarios', 'disponivel',
-    'disponibilidade', 'exame', 'retorno', 'link', 'whatsapp', 'telefone', 'contato', 'endereco',
-    'onde atende', 'valor', 'preco', 'precos', 'convenio'
-  ];
-
-  const matchedKeywords = findMatchedKeywords(combinedUserIntent, schedulingIntent);
-  return {
-    keep: matchedKeywords.length > 0,
-    matchedKeywords,
-    recentUserPreview: normalizeText(combinedUserIntent).slice(0, 160)
-  };
-}
-
-function stripIrrelevantCta(text) {
-  const ctaSignals = [
-    'agendar', 'agendamento', 'marcar', 'consulta', 'link', 'whatsapp', 'telefone', 'fale com a equipe',
-    'secretaria', 'entre em contato', 'doclogos.com', 'chama no whatsapp', 'ligar para'
-  ];
-
-  const chunks = String(text || '')
-    .split(/(?<=[.!?])\s+/)
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  const filtered = chunks.filter(s => !hasAnyKeyword(s, ctaSignals));
-  if (filtered.length) return filtered.join(' ').trim();
-
-  // Se tudo era CTA, mantem o texto original para nao retornar vazio.
-  return String(text || '').trim();
-}
-
 function pickGreetingText(userMessage) {
   const normalized = String(userMessage || '').trim().toLowerCase();
   if (normalized.includes('boa noite')) return 'Boa noite';
@@ -300,20 +239,9 @@ function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', mess
     'Cada caso precisa ser avaliado individualmente em consulta. '
   );
 
-  const ctaDecision = shouldKeepCta({ userMessage, messages });
-  claudeLog('info', 'cta_decision', {
-    channel: logContext.channel || 'instagram',
-    doctorId: logContext.doctorId || null,
-    senderId: logContext.senderId || null,
-    traceId: logContext.traceId || null,
-    keepCta: ctaDecision.keep,
-    matchedKeywords: ctaDecision.matchedKeywords,
-    userPreview: ctaDecision.recentUserPreview
-  });
-
-  if (!ctaDecision.keep) {
-    text = stripIrrelevantCta(text);
-  }
+  // CTA-stripping global foi REMOVIDO: o system_prompt + instructions controlam
+  // quando incluir link/CTA. Stripping global removia links uteis quando o cliente
+  // pedia explicitamente (ex.: "mande link em respostas sobre retinopatia").
 
   const sentenceChunks = text
     .split(/(?<=[.!?])\s+/)
