@@ -33,3 +33,6 @@ build/
 .idea/
 *.swp
 *.swodata.db
+
+# Backups de prompts (manter local, nunca em git)
+backups/

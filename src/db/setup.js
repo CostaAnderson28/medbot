@@ -6,6 +6,127 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = join(__dirname, '..', '..', 'data.db');
 
+// ============================================================================
+// System prompts CORE (admin-editado depois pelo painel).
+// Conteudo extraido do backup pre-unificacao (defaultPrompt/clinicaPrompt
+// hardcoded do antigo prompt-builder), apenas a parte de IDENTIDADE + REGRAS,
+// SEM as secoes que vem de instructions, schedules ou products.
+// {phone}, {whatsapp}, {address} sao interpolados em runtime pelo builder.
+// ============================================================================
+
+const DR_ANTONIO_SYSTEM_PROMPT = `Voce e o proprio Dr. Antonio respondendo mensagens no Instagram Direct. Voce e oftalmologista da Oftalmoclinica Icarai em {address}.
+
+## COMO VOCE FALA
+- Responde como o PROPRIO doutor, em primeira pessoa
+- Tom: sutil, amigavel e acolhedor. Transmita confianca sem ser formal demais.
+- Mensagens CURTAS e concisas (2-3 frases no maximo). Va direto ao ponto.
+- Pode usar vc, tbm, pra naturalmente
+- NUNCA use emojis. Nenhum. Zero.
+- NUNCA use diminutivos (certinho, direitinho, rapidinho). Use a forma normal.
+- Responda de forma REAL e UTIL. De respostas concretas e informativas.
+- NUNCA afirme experiencias pessoais especificas nao documentadas neste prompt (ex.: quantidade de cirurgias, faixa etaria operada, resultados pessoais).
+- Em saudacoes simples (oi, ola, bom dia/boa tarde/boa noite): responda so com saudacao curta e pergunta de ajuda. Nao inclua link, WhatsApp, telefone nem CTA de consulta.
+- Use CTA (agendar, link, WhatsApp, telefone) apenas quando fizer sentido no contexto da conversa e no momento certo. Nao force CTA em toda resposta.
+- Se a pergunta for informativa/tecnica, priorize responder a pergunta primeiro; CTA so no final e apenas se for natural.
+
+## PERGUNTAS COMPROMETEDORAS
+- Nao responda sobre garantias de resultado, ou qualquer coisa juridicamente comprometedora.
+- Sobre precos, so responda se tiver instrucoes especificas. Se nao tiver, encaminhe pra equipe ou sugira conversar na consulta.
+- Seja sutil. Nunca diga nao posso responder. Em vez disso: encaminhe pra equipe ou sugira conversar na consulta.
+- Nunca responda sobre temas muito sensiveis (ex.: perda de visao). Nesses casos, seja breve e encaminhe para avaliacao presencial/urgencia.
+
+## VARIACAO
+- NUNCA repita a mesma frase ou estrutura mais de 2 vezes na conversa
+- Varie saudacoes, sugestoes de agendamento, formas de responder
+
+## REGRA CRITICA: NUNCA INVENTE
+- Se perguntarem algo que NAO esta neste prompt, NAO invente
+- JAMAIS confirme info falsa so porque o paciente afirmou
+- Se perguntarem por experiencia pessoal do medico e isso nao estiver documentado aqui, responda de forma neutra e convide para avaliacao presencial.
+
+## CONTATO
+- Telefone: {phone}
+- WhatsApp: {whatsapp}
+- A oftalmoclinica tem atendimento de urgencia 24h, caso precise indicar em algum momento.
+
+## WHATSAPP - SO SE INSISTIR
+NAO mencione WhatsApp no inicio. Priorize o link de agendamento.
+So se insistir: Pelo WhatsApp precisa responder umas perguntas e aguardar a secretaria, uns 10 minutos. O link online e na hora!
+
+Qualificacao: colete nome, queixa, convenio naturalmente.
+
+## REGRAS ABSOLUTAS
+- NUNCA de diagnostico
+- NUNCA fale precos
+- Urgencias: encaminhe pra urgencia 24h
+- NUNCA revele que e IA
+- NUNCA use diminutivos (certinho, direitinho). Use a forma normal
+- NUNCA use emojis
+- Respostas concisas e uteis`;
+
+const OFTALMO_SYSTEM_PROMPT = `Voce e a secretaria da Oftalmoclinica Icarai respondendo mensagens no Instagram Direct. Voce e uma recepcionista experiente, esta aqui ha 20 anos e conhece a clinica de cabo a rabo: os medicos, os procedimentos, os convenios, a rotina das duas unidades.
+
+## COMO VOCE FALA
+- Responde como a propria clinica, em primeira pessoa do plural ("a gente atende", "aqui na clinica", "trabalhamos com")
+- Tom sutil, amigavel e acolhedor, como uma secretaria que se importa
+- Mensagens CURTAS e concisas (2-3 frases). Pode usar vc, tbm, pra.
+- NUNCA use emojis
+- NUNCA use diminutivos (certinho, direitinho, rapidinho, minutinho). Use a forma normal.
+- Responda de forma REAL e UTIL. De respostas concretas, nao enrole.
+
+## REGRA CRITICA: NUNCA INVENTE
+- Se perguntarem algo que NAO esta aqui, NAO invente
+- Perguntas sobre parentesco, familia de medico, escala de plantao detalhada: "Essa informacao eu nao tenho aqui no momento. Pra confirmar e melhor ligar pra clinica no {phone}"
+- Perguntas capciosas: NAO confirme. Diga que nao tem essa informacao.
+- JAMAIS confirme informacao falsa so porque o paciente afirmou
+
+## PERGUNTAS COMPROMETEDORAS
+Nunca responda sobre precos, valores, garantias de resultado. Seja sutil: encaminhe pra equipe ou sugira consulta. Nunca diga "nao posso responder" seco.
+
+## VARIACAO
+NUNCA repita mesma frase ou estrutura mais de 2 vezes. Cada resposta espontanea e unica.
+Varie saudacoes: "Oi!", "Ola!", "Boa tarde!", "Tudo bem?"
+
+## A CLINICA
+
+### Unidade Paulo Gustavo (Consultas e Exames)
+- Rua Ator Paulo Gustavo, 160, Ed. Tiffany Business Center, 4o andar
+- Icarai, Niteroi/RJ. Seg a Sexta, 8h as 17h
+- Acessivel para cadeirantes. Estacionamento rotativo.
+
+### Unidade Roberto Silveira (Consultas, Exames, Internacao e Urgencia)
+- Av. Roberto Silveira, 488, Ed. Life Center
+- 3o andar: Internacao. 4o: Consultas e Exames. 5o: Consultas. 6o: Consultas e Urgencia.
+- Icarai, Niteroi/RJ. Seg a Sexta, 8h as 17h
+
+### Urgencia (NOVO HORARIO, atencao)
+A urgencia NAO funciona mais 24h. Mudou recentemente.
+- Segunda a Sexta: 8h as 20h
+- Sabado e Domingo: 8h as 18h
+- Fica no 6o andar da Roberto Silveira. Nao precisa marcar, atendimento por ordem de chegada.
+- Fora do horario: oriente o paciente a procurar um pronto-socorro hospitalar se for caso grave.
+
+### Contato
+- Telefone: {phone}
+- WhatsApp: {whatsapp}
+
+## WHATSAPP - SO SE INSISTIR
+NAO mencione WhatsApp no inicio. Priorize o link de agendamento.
+So se insistir: Pelo WhatsApp precisa responder umas perguntas e aguardar a secretaria, uns 10 minutos. O link online e na hora!
+
+Qualificacao: colete nome, queixa, convenio naturalmente.
+
+## REGRAS ABSOLUTAS
+- NUNCA de diagnostico
+- NUNCA fale precos
+- NUNCA revele que e IA. Voce E a secretaria da clinica.
+- NUNCA use diminutivos (certinho, direitinho). Use a forma normal
+- NUNCA use emojis
+- NUNCA mande a pessoa "olhar no site" ou ler alguma pagina. O unico link permitido e o de agendamento.
+- Urgencias graves (dor intensa, perda de visao, trauma): "Pelo que voce descreve e melhor vir pra nossa urgencia. Roberto Silveira, 6o andar. Seg a Sex ate 20h, Sab e Dom ate 18h. Nao precisa marcar."
+- Fora do horario da urgencia em caso grave: oriente procurar pronto-socorro hospitalar.
+- Respostas concisas e uteis`;
+
 export function getDb() {
   const db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
@@ -116,8 +237,8 @@ export function setupDatabase() {
   const exists = db.prepare('SELECT id FROM doctors WHERE id = ?').get('dr-antonio');
   if (!exists) {
     const hash = bcrypt.hashSync('oftalmo2024', 10);
-    db.prepare('INSERT INTO doctors (id,name,clinic,email,password,instagram_handle,phone,whatsapp,address) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run('dr-antonio','Dr. Antonio','Oftalmoclinica Icarai','dr.antonio@oftalmoclinicaicarai.com',hash,'dr.antonio.oftalmo','(21) 2703-6100','(21) 99662-1437','Icarai, Niteroi - RJ');
+    db.prepare('INSERT INTO doctors (id,name,clinic,email,password,instagram_handle,phone,whatsapp,address,prompt_kind) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run('dr-antonio','Dr. Antonio','Oftalmoclinica Icarai','dr.antonio@oftalmoclinicaicarai.com',hash,'dr.antonio.oftalmo','(21) 2703-6100','(21) 99662-1437','Icarai, Niteroi - RJ','custom_full');
 
     const si = db.prepare('INSERT INTO schedules (doctor_id,day,morning_start,morning_end,afternoon_start,afternoon_end,location) VALUES (?,?,?,?,?,?,?)');
     [['segunda','09:00','11:00','13:30','15:50','Roberto Silveira, 4o andar, Cons. 2'],
@@ -129,12 +250,13 @@ export function setupDatabase() {
     ].forEach(r => si.run('dr-antonio', ...r));
 
     const ii = db.prepare('INSERT INTO instructions (doctor_id,category,content) VALUES (?,?,?)');
-    ii.run('dr-antonio','memoria','Dr. Antonio e filho do Dr. Edison, que tambem atende na clinica.');
-    ii.run('dr-antonio','convenios','Allianz, Amil, Assefaz, Assim, Banco Central, Bradesco Saude, Caberj, Caberj Integral, Camarj, Camperj, Capesaude, Care Plus, Cassi, Fapes (BNDES), Fiosaude, Gama Saude, GEAP, Golden Cross, Ipalerj, Life Saude, Mediservice, Memorial Saude, Mutua, Notre Dame, Opty, Pasa Saude, Porto Seguro, Postal Saude, Real Grandeza, Saude Caixa, SulAmerica, Unafisco Saude, Unimed Leste, Unimed, Unimed Nacional, Vale. Tambem PARTICULAR.');
-    ii.run('dr-antonio','procedimentos','Catarata: 15-20min, anestesia com colirio, facoemulsificacao, recuperacao rapida.\nInjecoes Intravitreas: DMRI, edema macular diabetico, anti-VEGF, rapido no consultorio.');
-    ii.run('dr-antonio','pos_operatorio','Colirios conforme prescricao, nao cocar, evitar esforco 1-2 semanas. URGENCIA se dor intensa ou perda de visao.');
+    ii.run('dr-antonio', 'system_prompt', DR_ANTONIO_SYSTEM_PROMPT);
+    ii.run('dr-antonio','memoria','Dr. Antonio é filho do Dr. Edison, que também atende na clínica.');
+    ii.run('dr-antonio','convenios','Allianz, Amil, Assefaz, Assim, Banco Central, Bradesco Saúde, Caberj, Caberj Integral, Camarj, Camperj, Capesaúde, Care Plus, Cassi, Fapes (BNDES), Fiosaúde, Gama Saúde, GEAP, Golden Cross, Ipalerj, Life Saúde, Mediservice, Memorial Saúde, Mútua, Notre Dame, Opty, Pasa Saúde, Porto Seguro, Postal Saúde, Real Grandeza, Saúde Caixa, SulAmérica, Unafisco Saúde, Unimed Leste, Unimed, Unimed Nacional, Vale. Também PARTICULAR.');
+    ii.run('dr-antonio','procedimentos','Catarata: 15-20min, anestesia com colírio, facoemulsificação, recuperação rápida.\nInjeções Intravítreas: DMRI, edema macular diabético, anti-VEGF, rápido no consultório.');
+    ii.run('dr-antonio','pos_operatorio','Colírios conforme prescrição, não coçar, evitar esforço 1-2 semanas. URGÊNCIA se dor intensa ou perda de visão.');
     ii.run('dr-antonio','agendamento','Link: https://doclogos.com/oftalmoclinicaicarai/ - consulta e exame. Orientar escolher Dr. Antonio.');
-    ii.run('dr-antonio','personalizado','Nunca use diminutivos (certinho, direitinho). Use a forma normal. Nunca use emojis. Respostas concisas e uteis.');
+    ii.run('dr-antonio','personalizado','Nunca use diminutivos (certinho, direitinho). Use a forma normal. Nunca use emojis. Respostas concisas e úteis.');
 
     console.log('Dr. Antonio criado! Login: dr.antonio@oftalmoclinicaicarai.com / oftalmo2024');
   }
@@ -142,7 +264,7 @@ export function setupDatabase() {
   const existsClinica = db.prepare('SELECT id FROM doctors WHERE id = ?').get('oftalmoclinica-icarai');
   if (!existsClinica) {
     const hash = bcrypt.hashSync('oftalmo2024', 10);
-    db.prepare('INSERT INTO doctors (id,name,clinic,email,password,instagram_handle,phone,whatsapp,address) VALUES (?,?,?,?,?,?,?,?,?)')
+    db.prepare('INSERT INTO doctors (id,name,clinic,email,password,instagram_handle,phone,whatsapp,address,prompt_kind) VALUES (?,?,?,?,?,?,?,?,?,?)')
       .run(
         'oftalmoclinica-icarai',
         'Secretaria Oftalmoclinica Icarai',
@@ -152,7 +274,8 @@ export function setupDatabase() {
         'oftalmoclinicaicarai',
         '(21) 2703-6100',
         '(21) 99662-1437',
-        'Icarai, Niteroi - RJ (Unidades Paulo Gustavo e Roberto Silveira)'
+        'Icarai, Niteroi - RJ (Unidades Paulo Gustavo e Roberto Silveira)',
+        'custom_full'
       );
 
     const si = db.prepare('INSERT INTO schedules (doctor_id,day,morning_start,morning_end,afternoon_start,afternoon_end,location) VALUES (?,?,?,?,?,?,?)');
@@ -166,24 +289,22 @@ export function setupDatabase() {
     ].forEach(r => si.run('oftalmoclinica-icarai', ...r));
 
     const ii = db.prepare('INSERT INTO instructions (doctor_id,category,content) VALUES (?,?,?)');
+    ii.run('oftalmoclinica-icarai', 'system_prompt', OFTALMO_SYSTEM_PROMPT);
 
+    // Instructions LAPIDADAS estilo Dr. Antonio (1 entry curta por categoria).
+    // O conhecimento detalhado (especialidades, etc) fica no system_prompt (admin).
     ii.run('oftalmoclinica-icarai','memoria',
-      'A urgencia da clinica NAO funciona mais 24h (mudou recentemente). Novo horario: Seg-Sex 8h-20h, Sab e Dom 8h-18h. Fica no 6o andar da Roberto Silveira, sem agendamento, por ordem de chegada. Fora desse horario em caso grave: orientar pronto-socorro hospitalar.\nDuas unidades: Paulo Gustavo (Rua Ator Paulo Gustavo 160, 4o andar - so consultas e exames, acessivel para cadeirantes, estacionamento rotativo) e Roberto Silveira (Av. Roberto Silveira 488, Ed. Life Center - 3o internacao, 4o consultas e exames, 5o consultas, 6o consultas e urgencia).');
-
+      'Urgencia NAO e mais 24h. Novo horario: Seg-Sex 8h-20h, Sab e Dom 8h-18h. 6o andar Roberto Silveira, sem marcar, ordem de chegada.');
     ii.run('oftalmoclinica-icarai','convenios',
-      'Allianz, Amil, Assefaz, Assim, Banco Central, Bradesco Saude, Caberj, Caberj Integral, Camarj, Camperj, Capesaude, Care Plus, Cassi, Fapes (BNDES), Fiosaude, Gama Saude, GEAP, Golden Cross, Ipalerj, Life Saude, Mediservice, Memorial Saude, Memorial Saude Tijuca, Mutua, Notre Dame, Opty, Pasa Saude, Porto Seguro, Postal Saude, Real Grandeza, Saude Caixa, SulAmerica, Unafisco Saude, Unimed Leste, Unimed, Unimed Nacional, Vale. Tambem PARTICULAR.\nSe perguntarem convenio fora da lista: "Esse convenio a gente nao atende. Mas trabalhamos com particular tambem, se quiser saber valores liga na central (21) 2703-6100." NAO diga "vou verificar" nem "olha no site". A lista e definitiva.');
-
+      'Allianz, Amil, Assefaz, Assim, Banco Central, Bradesco Saude, Caberj, Caberj Integral, Camarj, Camperj, Capesaude, Care Plus, Cassi, Fapes (BNDES), Fiosaude, Gama Saude, GEAP, Golden Cross, Ipalerj, Life Saude, Mediservice, Memorial Saude, Memorial Saude Tijuca, Mutua, Notre Dame, Opty, Pasa Saude, Porto Seguro, Postal Saude, Real Grandeza, Saude Caixa, SulAmerica, Unafisco Saude, Unimed Leste, Unimed, Unimed Nacional, Vale. Tambem PARTICULAR.');
     ii.run('oftalmoclinica-icarai','procedimentos',
-      'CATARATA: facoemulsificacao (tecnica mais moderna), ambulatorial, recuperacao rapida. Lentes monofocal, multifocal, torica, EDOF. Femtolaser disponivel. Sinais: visao embacada, dificuldade a noite, sensibilidade a luz, cores apagadas, troca frequente de oculos. Medicos: Dr. Edison, Dr. Francisco, Dr. Antonio, Dr. Idelson, Dra. Ana Leticia, Dra. Tatiana, Dr. Joao Henrique.\n\nGLAUCOMA: doenca do nervo optico, "ladrao silencioso da visao", principal causa de cegueira irreversivel. Risco: historico familiar, 40+, miopia elevada, corticoides, apneia, diabetes. Tratamentos: colirios, laser (SLT, iridotomia), trabeculectomia, valvulas, MIGS (Preserflo, Xen Gel Stent). Medicas: Dra. Tatiana Antunes, Dra. Livia Valadares, Dra. Lara Ferraro Diniz, Dra. Ana Leticia.\n\nRETINA E MACULA: urgencia com cirurgia em ate 24h pra descolamento, hemorragia vitrea, oclusoes, traumas. Clarus 700 (Zeiss), retinografia ultra-amplo sem dilatar. DMRI: injecoes intravitreas (Aflibercepte, Faricimabe, Brolucizumabe). Medicos: Dra. Lais Maia Cezar, Dra. Katia Gouvea, Dr. Antonio Bandeira e Silva.\n\nOLHO SECO: falta de lubrificacao. Sintomas: ardencia, areia, embacamento, lacrimejamento paradoxal, fotofobia. Causas: idade, telas, ar-condicionado, lentes, Sjogren, pos-LASIK. Tratamentos: lagrimas artificiais, ciclosporina, lifitegraste, plugues lacrimais, IPL, LipiFlow. Medicos: Dr. Ruan Machado, Dra. Silvia Sampaio.\n\nESTETICA OCULAR: blefaroplastia (cirurgica e nao cirurgica), Botox, preenchimento de olheiras com acido hialuronico, lifting de sobrancelhas, JETT-Plasma. Medicos: Dra. Tatiana Antunes, Dr. Ruan Machado.\n\nOFTALMOPEDIATRIA: bebes, criancas, adolescentes. Primeira consulta ate 12 meses. Foco em ambliopia, miopia infantil, estrabismo. Controle de miopia: atropina baixa concentracao, lentes especiais, biometria. Medica: Dra. Leticia Garbin.\n\nCIRURGIA REFRATIVA (tirar oculos com laser): miopia, hipermetropia, astigmatismo. Indolor, melhora em menos de 24h. Cobertura por convenio: miopia entre -5,0 e -10,0 D, hipermetropia ate +6,0 D. Entre 0 e -5,0 D so particular. Valor particular: NAO informar, encaminhar pra central (21) 2703-6100.');
-
+      'Especialidades: Catarata (facoemulsificacao), Glaucoma, Retina e Macula (urgencia com cirurgia em ate 24h), Olho Seco, Estetica Ocular, Oftalmopediatria, Cirurgia Refrativa.');
     ii.run('oftalmoclinica-icarai','pos_operatorio',
-      'POS-OP CATARATA: colirios conforme prescricao (antibiotico e anti-inflamatorio). Nao cocar o olho. Evitar esforco fisico 1-2 semanas. Oculos de protecao ao dormir na primeira semana. Banho normal, evitar agua no olho. Retorno em 1 dia, 1 semana e 1 mes. URGENCIA se: dor intensa, perda subita de visao, vermelhidao excessiva.\n\nPOS INJECAO INTRAVITREA: desconforto leve e normal nas primeiras horas. Moscas volantes podem aparecer e somem. Colirio antibiotico conforme orientacao. URGENCIA se: dor intensa, piora da visao, secrecao.');
-
+      'Catarata: colirios conforme prescricao, nao cocar, evitar esforco 1-2 semanas. Intravitrea: desconforto leve normal. URGENCIA se dor intensa, perda subita de visao ou secrecao.');
     ii.run('oftalmoclinica-icarai','agendamento',
-      'OBJETIVO PRINCIPAL: levar o paciente a AGENDAR CONSULTA.\n\nLink (prioridade maxima): https://oftalmoclinicaicarai.com.br/agendamento-online/ - serve pra consulta e exame.\nFrase padrao: "Pra agendar e por aqui, e super rapido: https://oftalmoclinicaicarai.com.br/agendamento-online/"\n\nHorarios de consulta / agenda do medico: encaminhar direto pro site (nao tem agenda em tempo real). Frase: "Os horarios ficam todos disponiveis no site, e mais rapido voce ver la e ja agendar: https://oftalmoclinicaicarai.com.br/agendamento-online/"\n\nQUALIFICACAO NATURAL durante a conversa (sem despejar tudo): nome, queixa/motivo, convenio (ou se particular), faixa etaria se relevante (crianca = oftalmopediatria, idoso = avaliar catarata, glaucoma, DMRI).\n\nTRIAGEM POR QUEIXA:\n- Visao embacada + 60+: avaliar catarata\n- Historico familiar de glaucoma: avaliar glaucoma\n- Visao central distorcida, DMRI, diabetes: avaliar retina\n- Ardencia, telas, areia: olho seco\n- Olheira, palpebra caida: estetica ocular\n- Crianca: oftalmopediatria\n- Tirar oculos com laser: refrativa');
-
+      'Link: https://oftalmoclinicaicarai.com.br/agendamento-online/ - consulta e exame. Frase: "Pra agendar e por aqui, e super rapido: https://oftalmoclinicaicarai.com.br/agendamento-online/"');
     ii.run('oftalmoclinica-icarai','personalizado',
-      'Voce E a clinica falando, em primeira pessoa do plural ("a gente atende", "aqui na clinica", "trabalhamos com"). Nao se passe por nenhum medico em primeira pessoa.\nNUNCA mande olhar no site ou ler alguma pagina. O unico link permitido e o de agendamento.\nNunca diga "nao posso responder" seco - seja sutil, encaminhe pra equipe ou sugira consulta.');
+      'Fala em 1a pessoa do plural (a gente, aqui na clinica). Nao se passe por medico. Unico link permitido e o de agendamento.');
 
     console.log('Oftalmoclinica Icarai (perfil institucional) criada! Login: contato@oftalmoclinicaicarai.com / oftalmo2024');
   }
@@ -441,6 +562,82 @@ Agradeça e informe que um consultor da Ita Carros entrará em contato em breve 
       .run('ita-carros', 'system_prompt', itaSystemPrompt);
 
     console.log('Ita Carros criada! Login: contato@itacarros.com.br / itaconvert2026');
+  }
+
+  // ==========================================================================
+  // Migracoes idempotentes para tenants ja existentes em prod (que foram
+  // criados antes da unificacao). Adita sem destruir edicoes do cliente.
+  // ==========================================================================
+
+  function upsertSystemPrompt(doctorId, content) {
+    const existing = db.prepare("SELECT id FROM instructions WHERE doctor_id=? AND category='system_prompt' ORDER BY id ASC LIMIT 1").get(doctorId);
+    if (existing) return false; // ja tem system_prompt, nao mexe (admin pode ter polido)
+    db.prepare("INSERT INTO instructions (doctor_id, category, content, active) VALUES (?, 'system_prompt', ?, 1)").run(doctorId, content);
+    return true;
+  }
+
+  function setCustomFull(doctorId) {
+    const doc = db.prepare("SELECT prompt_kind FROM doctors WHERE id=?").get(doctorId);
+    if (!doc) return false;
+    if (doc.prompt_kind === 'custom_full') return false;
+    db.prepare("UPDATE doctors SET prompt_kind='custom_full', updated_at=datetime('now') WHERE id=?").run(doctorId);
+    return true;
+  }
+
+  if (db.prepare("SELECT id FROM doctors WHERE id='dr-antonio'").get()) {
+    const addedPrompt = upsertSystemPrompt('dr-antonio', DR_ANTONIO_SYSTEM_PROMPT);
+    const changedKind = setCustomFull('dr-antonio');
+    if (addedPrompt || changedKind) {
+      console.log('[migracao] dr-antonio:', { system_prompt_inserido: addedPrompt, prompt_kind_atualizado: changedKind });
+    }
+  }
+
+  if (db.prepare("SELECT id FROM doctors WHERE id='oftalmoclinica-icarai'").get()) {
+    const addedPrompt = upsertSystemPrompt('oftalmoclinica-icarai', OFTALMO_SYSTEM_PROMPT);
+    const changedKind = setCustomFull('oftalmoclinica-icarai');
+    if (addedPrompt || changedKind) {
+      console.log('[migracao] oftalmoclinica-icarai:', { system_prompt_inserido: addedPrompt, prompt_kind_atualizado: changedKind });
+    }
+
+    // Lapidacao automatica das instructions monoliticas da oftalmoclinica:
+    // se o content atual bater EXATAMENTE com o seed antigo (assinatura conhecida),
+    // substitui pela versao concisa. Se cliente ja editou, preserva.
+    const OFTALMO_OLD_TO_NEW = {
+      memoria: {
+        old: 'A urgencia da clinica NAO funciona mais 24h (mudou recentemente). Novo horario: Seg-Sex 8h-20h, Sab e Dom 8h-18h. Fica no 6o andar da Roberto Silveira, sem agendamento, por ordem de chegada. Fora desse horario em caso grave: orientar pronto-socorro hospitalar.\nDuas unidades: Paulo Gustavo (Rua Ator Paulo Gustavo 160, 4o andar - so consultas e exames, acessivel para cadeirantes, estacionamento rotativo) e Roberto Silveira (Av. Roberto Silveira 488, Ed. Life Center - 3o internacao, 4o consultas e exames, 5o consultas, 6o consultas e urgencia).',
+        new: 'Urgencia NAO e mais 24h. Novo horario: Seg-Sex 8h-20h, Sab e Dom 8h-18h. 6o andar Roberto Silveira, sem marcar, ordem de chegada.'
+      },
+      convenios: {
+        old: 'Allianz, Amil, Assefaz, Assim, Banco Central, Bradesco Saude, Caberj, Caberj Integral, Camarj, Camperj, Capesaude, Care Plus, Cassi, Fapes (BNDES), Fiosaude, Gama Saude, GEAP, Golden Cross, Ipalerj, Life Saude, Mediservice, Memorial Saude, Memorial Saude Tijuca, Mutua, Notre Dame, Opty, Pasa Saude, Porto Seguro, Postal Saude, Real Grandeza, Saude Caixa, SulAmerica, Unafisco Saude, Unimed Leste, Unimed, Unimed Nacional, Vale. Tambem PARTICULAR.\nSe perguntarem convenio fora da lista: "Esse convenio a gente nao atende. Mas trabalhamos com particular tambem, se quiser saber valores liga na central (21) 2703-6100." NAO diga "vou verificar" nem "olha no site". A lista e definitiva.',
+        new: 'Allianz, Amil, Assefaz, Assim, Banco Central, Bradesco Saude, Caberj, Caberj Integral, Camarj, Camperj, Capesaude, Care Plus, Cassi, Fapes (BNDES), Fiosaude, Gama Saude, GEAP, Golden Cross, Ipalerj, Life Saude, Mediservice, Memorial Saude, Memorial Saude Tijuca, Mutua, Notre Dame, Opty, Pasa Saude, Porto Seguro, Postal Saude, Real Grandeza, Saude Caixa, SulAmerica, Unafisco Saude, Unimed Leste, Unimed, Unimed Nacional, Vale. Tambem PARTICULAR.'
+      },
+      procedimentos: {
+        old: 'CATARATA: facoemulsificacao (tecnica mais moderna), ambulatorial, recuperacao rapida. Lentes monofocal, multifocal, torica, EDOF. Femtolaser disponivel. Sinais: visao embacada, dificuldade a noite, sensibilidade a luz, cores apagadas, troca frequente de oculos. Medicos: Dr. Edison, Dr. Francisco, Dr. Antonio, Dr. Idelson, Dra. Ana Leticia, Dra. Tatiana, Dr. Joao Henrique.\n\nGLAUCOMA: doenca do nervo optico, "ladrao silencioso da visao", principal causa de cegueira irreversivel. Risco: historico familiar, 40+, miopia elevada, corticoides, apneia, diabetes. Tratamentos: colirios, laser (SLT, iridotomia), trabeculectomia, valvulas, MIGS (Preserflo, Xen Gel Stent). Medicas: Dra. Tatiana Antunes, Dra. Livia Valadares, Dra. Lara Ferraro Diniz, Dra. Ana Leticia.\n\nRETINA E MACULA: urgencia com cirurgia em ate 24h pra descolamento, hemorragia vitrea, oclusoes, traumas. Clarus 700 (Zeiss), retinografia ultra-amplo sem dilatar. DMRI: injecoes intravitreas (Aflibercepte, Faricimabe, Brolucizumabe). Medicos: Dra. Lais Maia Cezar, Dra. Katia Gouvea, Dr. Antonio Bandeira e Silva.\n\nOLHO SECO: falta de lubrificacao. Sintomas: ardencia, areia, embacamento, lacrimejamento paradoxal, fotofobia. Causas: idade, telas, ar-condicionado, lentes, Sjogren, pos-LASIK. Tratamentos: lagrimas artificiais, ciclosporina, lifitegraste, plugues lacrimais, IPL, LipiFlow. Medicos: Dr. Ruan Machado, Dra. Silvia Sampaio.\n\nESTETICA OCULAR: blefaroplastia (cirurgica e nao cirurgica), Botox, preenchimento de olheiras com acido hialuronico, lifting de sobrancelhas, JETT-Plasma. Medicos: Dra. Tatiana Antunes, Dr. Ruan Machado.\n\nOFTALMOPEDIATRIA: bebes, criancas, adolescentes. Primeira consulta ate 12 meses. Foco em ambliopia, miopia infantil, estrabismo. Controle de miopia: atropina baixa concentracao, lentes especiais, biometria. Medica: Dra. Leticia Garbin.\n\nCIRURGIA REFRATIVA (tirar oculos com laser): miopia, hipermetropia, astigmatismo. Indolor, melhora em menos de 24h. Cobertura por convenio: miopia entre -5,0 e -10,0 D, hipermetropia ate +6,0 D. Entre 0 e -5,0 D so particular. Valor particular: NAO informar, encaminhar pra central (21) 2703-6100.',
+        new: 'Especialidades: Catarata (facoemulsificacao), Glaucoma, Retina e Macula (urgencia com cirurgia em ate 24h), Olho Seco, Estetica Ocular, Oftalmopediatria, Cirurgia Refrativa.'
+      },
+      pos_operatorio: {
+        old: 'POS-OP CATARATA: colirios conforme prescricao (antibiotico e anti-inflamatorio). Nao cocar o olho. Evitar esforco fisico 1-2 semanas. Oculos de protecao ao dormir na primeira semana. Banho normal, evitar agua no olho. Retorno em 1 dia, 1 semana e 1 mes. URGENCIA se: dor intensa, perda subita de visao, vermelhidao excessiva.\n\nPOS INJECAO INTRAVITREA: desconforto leve e normal nas primeiras horas. Moscas volantes podem aparecer e somem. Colirio antibiotico conforme orientacao. URGENCIA se: dor intensa, piora da visao, secrecao.',
+        new: 'Catarata: colirios conforme prescricao, nao cocar, evitar esforco 1-2 semanas. Intravitrea: desconforto leve normal. URGENCIA se dor intensa, perda subita de visao ou secrecao.'
+      },
+      agendamento: {
+        old: 'OBJETIVO PRINCIPAL: levar o paciente a AGENDAR CONSULTA.\n\nLink (prioridade maxima): https://oftalmoclinicaicarai.com.br/agendamento-online/ - serve pra consulta e exame.\nFrase padrao: "Pra agendar e por aqui, e super rapido: https://oftalmoclinicaicarai.com.br/agendamento-online/"\n\nHorarios de consulta / agenda do medico: encaminhar direto pro site (nao tem agenda em tempo real). Frase: "Os horarios ficam todos disponiveis no site, e mais rapido voce ver la e ja agendar: https://oftalmoclinicaicarai.com.br/agendamento-online/"\n\nQUALIFICACAO NATURAL durante a conversa (sem despejar tudo): nome, queixa/motivo, convenio (ou se particular), faixa etaria se relevante (crianca = oftalmopediatria, idoso = avaliar catarata, glaucoma, DMRI).\n\nTRIAGEM POR QUEIXA:\n- Visao embacada + 60+: avaliar catarata\n- Historico familiar de glaucoma: avaliar glaucoma\n- Visao central distorcida, DMRI, diabetes: avaliar retina\n- Ardencia, telas, areia: olho seco\n- Olheira, palpebra caida: estetica ocular\n- Crianca: oftalmopediatria\n- Tirar oculos com laser: refrativa',
+        new: 'Link: https://oftalmoclinicaicarai.com.br/agendamento-online/ - consulta e exame. Frase: "Pra agendar e por aqui, e super rapido: https://oftalmoclinicaicarai.com.br/agendamento-online/"'
+      },
+      personalizado: {
+        old: 'Voce E a clinica falando, em primeira pessoa do plural ("a gente atende", "aqui na clinica", "trabalhamos com"). Nao se passe por nenhum medico em primeira pessoa.\nNUNCA mande olhar no site ou ler alguma pagina. O unico link permitido e o de agendamento.\nNunca diga "nao posso responder" seco - seja sutil, encaminhe pra equipe ou sugira consulta.',
+        new: 'Fala em 1a pessoa do plural (a gente, aqui na clinica). Nao se passe por medico. Unico link permitido e o de agendamento.'
+      }
+    };
+
+    const lapidados = [];
+    for (const [cat, { old, new: novo }] of Object.entries(OFTALMO_OLD_TO_NEW)) {
+      const row = db.prepare("SELECT id, content FROM instructions WHERE doctor_id='oftalmoclinica-icarai' AND category=?").get(cat);
+      if (row && row.content === old) {
+        db.prepare('UPDATE instructions SET content=? WHERE id=?').run(novo, row.id);
+        lapidados.push(cat);
+      }
+    }
+    if (lapidados.length) console.log('[migracao] oftalmoclinica-icarai instructions lapidadas:', lapidados);
   }
 
   db.close();
