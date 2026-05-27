@@ -111,8 +111,8 @@ tr:hover td{background:#fafbfc}
 <div class="field"><label>ID (slug)</label><input id="cId" placeholder="ex: minha-empresa"></div>
 <div class="field"><label>Tipo</label>
 <select id="cKind">
-<option value="medico">Médico (boilerplate)</option>
-<option value="custom_full">Empresa (prompt full + produtos)</option>
+<option value="medico">Médico (aba Agenda)</option>
+<option value="empresa">Empresa (aba Produtos)</option>
 </select>
 </div>
 </div>
@@ -130,7 +130,7 @@ tr:hover td{background:#fafbfc}
 <div class="field"><label>WhatsApp</label><input id="cWpp"></div>
 </div>
 <div class="field"><label>Endereço</label><input id="cAddr"></div>
-<div class="field" id="cPromptBox" style="display:none"><label>System prompt (markdown completo) — opcional, vc pode editar depois</label><textarea id="cPrompt" placeholder="# IDENTIDADE\nVocê é..."></textarea></div>
+<div class="field"><label>System prompt (markdown completo) — opcional, vc pode editar depois</label><textarea id="cPrompt" placeholder="# IDENTIDADE\nVocê é..."></textarea></div>
 <div class="error" id="cErr"></div>
 <button class="btn btn-primary" onclick="createTenant()">Criar tenant</button>
 </div>
@@ -152,8 +152,8 @@ tr:hover td{background:#fafbfc}
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
 <div class="field"><label>Page ID</label><input id="dPageId"></div>
-<div class="field"><label>Tipo de prompt</label>
-<select id="dKind"><option value="medico">Médico</option><option value="custom_full">Empresa (custom_full)</option></select>
+<div class="field"><label>Tipo de tenant</label>
+<select id="dKind"><option value="medico">Médico (aba Agenda)</option><option value="empresa">Empresa (aba Produtos)</option></select>
 </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -226,10 +226,6 @@ document.querySelectorAll('.nav a[data-page]').forEach(function(a){
   });
 });
 
-// Toggle do textarea de prompt no form de criar — só pra custom_full
-document.getElementById('cKind').addEventListener('change',function(e){
-  document.getElementById('cPromptBox').style.display=e.target.value==='custom_full'?'block':'none';
-});
 
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 
@@ -239,7 +235,7 @@ async function loadTenants(){
   currentTenants=rows;
   if(!rows.length){document.getElementById('tenantsBody').innerHTML='<tr><td colspan="8" class="empty">Nenhum tenant cadastrado.</td></tr>';return}
   document.getElementById('tenantsBody').innerHTML=rows.map(function(t){
-    var kind=t.prompt_kind==='custom_full'?'<span class="badge badge-empresa">Empresa</span>':'<span class="badge badge-medico">Médico</span>';
+    var kind=t.tenant_type==='empresa'?'<span class="badge badge-empresa">Empresa</span>':'<span class="badge badge-medico">Médico</span>';
     var checked=t.bot_active?'checked':'';
     return '<tr>'+
       '<td><div style="font-weight:600">'+escapeHtml(t.name)+'</div><div style="font-size:11px;color:#888">'+escapeHtml(t.id)+'</div></td>'+
@@ -270,7 +266,7 @@ async function openDetail(id){
   document.getElementById('dEmail').value=t.email||'';
   document.getElementById('dInsta').value=t.instagram_handle||'';
   document.getElementById('dPageId').value=t.page_id||'';
-  document.getElementById('dKind').value=t.prompt_kind||'medico';
+  document.getElementById('dKind').value=t.tenant_type||'medico';
   document.getElementById('dPhone').value=t.phone||'';
   document.getElementById('dWpp').value=t.whatsapp||'';
   document.getElementById('dAddr').value=t.address||'';
@@ -290,7 +286,7 @@ async function saveDetail(){
     email:document.getElementById('dEmail').value.trim(),
     instagram_handle:document.getElementById('dInsta').value.trim(),
     page_id:document.getElementById('dPageId').value.trim()||null,
-    prompt_kind:document.getElementById('dKind').value,
+    tenant_type:document.getElementById('dKind').value,
     phone:document.getElementById('dPhone').value.trim(),
     whatsapp:document.getElementById('dWpp').value.trim(),
     address:document.getElementById('dAddr').value.trim()
@@ -299,9 +295,8 @@ async function saveDetail(){
   var pass=document.getElementById('dPass').value;
   var r=await api('/admin/tenants/'+editingId,{method:'PUT',body:JSON.stringify(body)});
   if(!r||r.error){toast((r&&r.error)||'Erro ao salvar',true);return}
-  if(body.prompt_kind==='custom_full'||promptText.trim().length){
-    await api('/admin/tenants/'+editingId+'/system-prompt',{method:'PUT',body:JSON.stringify({content:promptText})});
-  }
+  // system_prompt sempre salva (admin pode editar pra qualquer tenant)
+  await api('/admin/tenants/'+editingId+'/system-prompt',{method:'PUT',body:JSON.stringify({content:promptText})});
   if(pass&&pass.length>=6){
     var pr=await api('/admin/tenants/'+editingId+'/password',{method:'PUT',body:JSON.stringify({password:pass})});
     if(!pr||pr.error){toast('Dados salvos, mas senha falhou: '+((pr&&pr.error)||''),true)}
@@ -318,7 +313,7 @@ async function createTenant(){
     clinic:document.getElementById('cClinic').value.trim(),
     email:document.getElementById('cEmail').value.trim(),
     password:document.getElementById('cPass').value,
-    prompt_kind:document.getElementById('cKind').value,
+    tenant_type:document.getElementById('cKind').value,
     instagram_handle:document.getElementById('cInsta').value.trim(),
     phone:document.getElementById('cPhone').value.trim(),
     whatsapp:document.getElementById('cWpp').value.trim(),

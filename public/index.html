@@ -120,8 +120,8 @@ body{font-family:'DM Sans',sans-serif;background:#f5f7fa;color:#1a2a3a;min-heigh
 <a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
 <a href="#" data-page="crm"><span class="icon">👥</span><span>Conversas</span></a>
 <a href="#" data-page="agenda" data-only="medico"><span class="icon">📅</span><span>Agenda</span></a>
-<a href="#" data-page="instrucoes" data-only="medico"><span class="icon">📝</span><span>Instruções</span></a>
-<a href="#" data-page="produtos" data-only="custom_full"><span class="icon">📦</span><span>Produtos</span></a>
+<a href="#" data-page="instrucoes"><span class="icon">📝</span><span>Instruções</span></a>
+<a href="#" data-page="produtos" data-only="empresa"><span class="icon">📦</span><span>Produtos</span></a>
 <a href="#" data-page="simulacao"><span class="icon">💬</span><span>Simulação</span></a>
 <a href="#" data-page="config"><span class="icon">⚙️</span><span>Configurações</span></a>
 </div>
@@ -277,10 +277,10 @@ function showApp(){
   document.getElementById('botToggle').checked=DOCTOR.bot_active;
   document.getElementById('botLabel').textContent=DOCTOR.bot_active?'Bot ativo':'Bot pausado';
   document.getElementById('simName').textContent='Simulação — '+DOCTOR.name;
-  // Mostra abas conforme prompt_kind
-  var kind=DOCTOR.prompt_kind||'medico';
+  // Mostra abas conforme tenant_type (medico = ve Agenda; empresa = ve Produtos; Instrucoes/Conversas/etc visiveis a todos).
+  var type=DOCTOR.tenant_type||'medico';
   document.querySelectorAll('.nav a[data-only]').forEach(function(a){
-    a.style.display=(a.dataset.only===kind)?'':'none';
+    a.style.display=(a.dataset.only===type)?'':'none';
   });
   // Link de admin
   if(DOCTOR.is_admin){document.getElementById('adminLink').style.display='inline-block'}
