@@ -22,14 +22,25 @@ const MAX_REPLY_CHARS = Number(process.env.MAX_REPLY_CHARS || 360);
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
 function getPageAccessTokenForDoctor(doctorId) {
-  const byDoctor = {
+  // Mapa legado dos tenants antigos (preserva os nomes historicos das env vars).
+  const legacyMap = {
     'dr-arrascaeta': PAGE_TOKEN_ARRASCAETA,
     'dr-antonio': PAGE_TOKEN_ANTONIO,
     'oftalmoclinica-icarai': PAGE_TOKEN_OFTALMOCLINICA,
     'r15-madeireira': PAGE_TOKEN_R15MADEIREIRA,
     'ita-carros': PAGE_TOKEN_ITACARROS
   };
-  return byDoctor[doctorId] || PAGE_ACCESS_TOKEN || '';
+  if (legacyMap[doctorId]) return legacyMap[doctorId];
+
+  // Convencao dinamica pra novos tenants:
+  //   doctor_id 'dr-francisco' -> env PAGE_TOKEN_DRFRANCISCO
+  //   doctor_id 'clinica-xyz'  -> env PAGE_TOKEN_CLINICAXYZ
+  // Tira tracos, deixa em UPPERCASE.
+  const envName = 'PAGE_TOKEN_' + String(doctorId || '').replace(/-/g, '').toUpperCase();
+  const token = process.env[envName];
+  if (token) return token;
+
+  return PAGE_ACCESS_TOKEN || '';
 }
 
 function delay(ms) {
