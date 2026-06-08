@@ -42,8 +42,9 @@ npm start
 ```
 
 Acesse:
-- http://localhost:3000 → Painel (login: dr.antonio@oftalmoclinicaicarai.com / oftalmo2024)
-- http://localhost:3000/demo.html → Chat demo
+- http://localhost:3000 → Painel (credenciais em `acessos.md`, não commitado)
+- http://localhost:3000/admin.html → Painel admin (super-usuário)
+- http://localhost:3000/demo.html → Chat demo público
 - http://localhost:3000/health → Status
 
 ## Variáveis de ambiente
@@ -52,7 +53,7 @@ Acesse:
 ANTHROPIC_API_KEY=sk-ant-api03-...    # Chave Anthropic
 JWT_SECRET=string-forte               # Segredo JWT
 PAGE_ACCESS_TOKEN=EAA...              # Token Instagram (depois de criar app no Meta)
-VERIFY_TOKEN=oftalmo2024              # Você escolhe
+VERIFY_TOKEN=string-que-voce-escolhe  # Usado pra verificar webhook do Meta
 IG_ACCOUNT_ID=1784...                 # ID da conta Instagram (opcional se page_id estiver no banco)
 DOCTOR_ID=dr-antonio                  # Doutor usado para fallback de page_id no banco
 PORT=3000
@@ -115,7 +116,3 @@ npm run subscribe:webhook
 
 O script usa `IG_ACCOUNT_ID` (ou `INSTAGRAM_ACCOUNT_ID`). Se não existir, tenta ler `page_id` do doutor no `data.db` usando `DOCTOR_ID`.
 
-## Login padrão
-
-- **Email:** dr.antonio@oftalmoclinicaicarai.com
-- **Senha:** oftalmo2024
