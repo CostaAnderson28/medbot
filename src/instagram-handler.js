@@ -233,6 +233,39 @@ function pickGreetingText(userMessage) {
   return 'Bom dia';
 }
 
+// Abreviacoes em PT-BR que terminam em "." e nao devem ser tratadas como fim de frase.
+// Ordem importa: variantes mais longas primeiro (Dra. antes de Dr.) pra evitar match parcial.
+const PROTECTED_ABBREV = [
+  'Dra.', 'Dras.', 'Drs.', 'Dr.',
+  'Sra.', 'Sras.', 'Srs.', 'Sr.',
+  'Profa.', 'Profs.', 'Prof.',
+  'Av.', 'Sta.', 'Pça.',
+  'etc.', 'ex.', 'p.ex.',
+  'cm.', 'm.', 'kg.', 'g.'
+];
+
+function splitIntoSentences(text) {
+  // Substitui abreviacoes por placeholders antes do split pra evitar quebra
+  // em pontos que nao sao fim de frase (ex.: "o Dr. Francisco" virava 2 frases).
+  let safe = text;
+  PROTECTED_ABBREV.forEach((abbr, i) => {
+    const placeholder = `__ABBR${i}__`;
+    safe = safe.split(abbr).join(placeholder);
+  });
+
+  const parts = safe.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+
+  // Restaura as abreviacoes em cada sentenca
+  return parts.map(p => {
+    let restored = p;
+    PROTECTED_ABBREV.forEach((abbr, i) => {
+      const placeholder = `__ABBR${i}__`;
+      restored = restored.split(placeholder).join(abbr);
+    });
+    return restored;
+  });
+}
+
 function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', messages = [], logContext = {} } = {}) {
   if (isGreetingOnlyMessage(userMessage)) {
     const greeting = pickGreetingText(userMessage);
@@ -255,11 +288,7 @@ function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', mess
   // pedia explicitamente (ex.: "mande link em respostas sobre retinopatia").
 
   const URL_RE = /https?:\/\/\S+/;
-
-  const sentenceChunks = text
-    .split(/(?<=[.!?])\s+/)
-    .map(s => s.trim())
-    .filter(Boolean);
+  const sentenceChunks = splitIntoSentences(text);
 
   if (sentenceChunks.length > MAX_REPLY_SENTENCES) {
     // Preserva sempre sentencas com URL (sao estruturais, nao podem ser cortadas).
