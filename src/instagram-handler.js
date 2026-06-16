@@ -268,9 +268,11 @@ function splitIntoSentences(text) {
 
 function sanitizeAssistantReply(reply, { userMessage = '', doctorName = '', messages = [], logContext = {} } = {}) {
   if (isGreetingOnlyMessage(userMessage)) {
+    // Saudacao neutra de identidade. NAO inclui "Sou o XXX" porque isso pode
+    // contradizer a persona definida no system_prompt (ex.: tenants onde o bot
+    // e a SECRETARIA do medico, nao o medico em si). A identidade e controlada
+    // pelo system_prompt quando o paciente faz uma pergunta substantiva.
     const greeting = pickGreetingText(userMessage);
-    const doc = String(doctorName || '').trim();
-    if (doc) return `${greeting}! Sou o ${doc}. Como posso te ajudar hoje?`;
     return `${greeting}! Como posso te ajudar hoje?`;
   }
 
