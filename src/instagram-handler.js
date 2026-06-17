@@ -12,8 +12,8 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const profileCache = new Map();
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
 const ANTHROPIC_RETRIES = Number(process.env.ANTHROPIC_RETRIES || 3);
-const ANTHROPIC_MODEL_PRIMARY = process.env.ANTHROPIC_MODEL_PRIMARY || 'claude-sonnet-4-20250514';
-const ANTHROPIC_MODEL_FALLBACK = process.env.ANTHROPIC_MODEL_FALLBACK || 'claude-3-5-haiku-20241022';
+const ANTHROPIC_MODEL_PRIMARY = process.env.ANTHROPIC_MODEL_PRIMARY || 'claude-sonnet-4-6';
+const ANTHROPIC_MODEL_FALLBACK = process.env.ANTHROPIC_MODEL_FALLBACK || 'claude-haiku-4-5-20251001';
 const ANTHROPIC_ENABLE_MODEL_FALLBACK = process.env.ANTHROPIC_ENABLE_MODEL_FALLBACK !== '0';
 const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
 const MAX_REPLY_SENTENCES = Number(process.env.MAX_REPLY_SENTENCES || 3);
@@ -485,8 +485,10 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
 }
 
 async function callClaudeReliable(systemPrompt, messages, ctx = {}) {
-  const models = [ANTHROPIC_MODEL_PRIMARY];
-  if (ANTHROPIC_ENABLE_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK !== ANTHROPIC_MODEL_PRIMARY) {
+  // ctx.primaryOverride: modelo configurado por tenant no banco (sobrescreve env).
+  const primary = ctx.primaryOverride || ANTHROPIC_MODEL_PRIMARY;
+  const models = [primary];
+  if (ANTHROPIC_ENABLE_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK && ANTHROPIC_MODEL_FALLBACK !== primary) {
     models.push(ANTHROPIC_MODEL_FALLBACK);
   }
 
@@ -732,7 +734,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
     messages.push(buildTemporalReminderMessage());
 
     // Chama Claude
-    const rawReply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary' });
+    const rawReply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary', primaryOverride: result.doctor?.model || null });
     const reply = sanitizeAssistantReply(rawReply, {
       userMessage,
       doctorName: result?.doctor?.name || '',
@@ -750,7 +752,8 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
           doctorId,
           senderId,
           traceId,
-          phase: 'processed_recovery'
+          phase: 'processed_recovery',
+          primaryOverride: result.doctor?.model || null
         });
         const recovered = sanitizeAssistantReply(recoveredRaw, {
           userMessage,

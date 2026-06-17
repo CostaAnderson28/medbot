@@ -234,6 +234,12 @@ export function setupDatabase() {
     // Marca empresas pelo ID (r15-madeireira, ita-carros).
     db.exec("UPDATE doctors SET tenant_type='empresa' WHERE id IN ('r15-madeireira','ita-carros')");
   }
+  const hasModel = doctorColumns.some(c => c.name === 'model');
+  if (!hasModel) {
+    // model TEXT NULL: null = usa ANTHROPIC_MODEL_PRIMARY do env. Quando set,
+    // sobrescreve por tenant (ex.: dr-francisco -> claude-opus-4-7).
+    db.exec("ALTER TABLE doctors ADD COLUMN model TEXT");
+  }
 
   // Bootstrap do admin (gerente do app). Usa a propria tabela doctors com is_admin=1.
   const existsAdmin = db.prepare('SELECT id FROM doctors WHERE id = ?').get('admin');

@@ -28,7 +28,7 @@ router.get('/tenants/:id', (req, res) => {
   const db = getDb();
   const doc = db.prepare(`
     SELECT id,name,clinic,email,instagram_handle,page_id,phone,whatsapp,address,
-           bot_active,prompt_kind,tenant_type,delay_first,delay_min,delay_max,created_at,updated_at
+           bot_active,prompt_kind,tenant_type,model,delay_first,delay_min,delay_max,created_at,updated_at
     FROM doctors WHERE id=?
   `).get(req.params.id);
   if (!doc) { db.close(); return res.status(404).json({ error: 'Tenant nao encontrado' }); }
@@ -52,12 +52,16 @@ router.put('/tenants/:id/toggle-bot', (req, res) => {
 
 // Atualiza dados gerais do tenant (sem senha)
 router.put('/tenants/:id', (req, res) => {
-  const { name, clinic, email, instagram_handle, page_id, phone, whatsapp, address, prompt_kind, tenant_type } = req.body || {};
+  const { name, clinic, email, instagram_handle, page_id, phone, whatsapp, address, prompt_kind, tenant_type, model } = req.body || {};
   const db = getDb();
   const existing = db.prepare('SELECT * FROM doctors WHERE id=? AND is_admin=0').get(req.params.id);
   if (!existing) { db.close(); return res.status(404).json({ error: 'Tenant nao encontrado' }); }
+  // model: string vazia ou null -> usa env default. Senao, sobrescreve.
+  const newModel = model === undefined
+    ? existing.model
+    : (model && String(model).trim() ? String(model).trim() : null);
   db.prepare(`UPDATE doctors SET
-    name=?, clinic=?, email=?, instagram_handle=?, page_id=?, phone=?, whatsapp=?, address=?, prompt_kind=?, tenant_type=?,
+    name=?, clinic=?, email=?, instagram_handle=?, page_id=?, phone=?, whatsapp=?, address=?, prompt_kind=?, tenant_type=?, model=?,
     updated_at=datetime('now')
     WHERE id=?`).run(
     name ?? existing.name,
@@ -70,6 +74,7 @@ router.put('/tenants/:id', (req, res) => {
     address ?? existing.address,
     prompt_kind ?? existing.prompt_kind,
     tenant_type ?? existing.tenant_type,
+    newModel,
     req.params.id
   );
   db.close();

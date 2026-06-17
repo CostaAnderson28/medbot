@@ -176,6 +176,16 @@ tr:hover td{background:#fafbfc}
 <select id="dKind"><option value="medico">Médico (aba Agenda)</option><option value="empresa">Empresa (aba Produtos)</option></select>
 </div>
 </div>
+<div class="field"><label>Modelo Claude (override por tenant)</label>
+<select id="dModel">
+<option value="">Padrão do servidor (.env)</option>
+<option value="claude-sonnet-4-6">Sonnet 4.6 (equilíbrio — padrão recomendado)</option>
+<option value="claude-opus-4-7">Opus 4.7 (qualidade — pra prompts complexos)</option>
+<option value="claude-opus-4-8">Opus 4.8 (topo de linha)</option>
+<option value="claude-haiku-4-5-20251001">Haiku 4.5 (rápido e barato — qualidade menor)</option>
+</select>
+<div style="font-size:11px;color:#888;margin-top:4px">Deixe "Padrão" pra usar o modelo global do .env. Escolha um específico só se esse tenant tiver necessidade especial (ex.: funil complexo).</div>
+</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
 <div class="field"><label>Telefone</label><input id="dPhone"></div>
 <div class="field"><label>WhatsApp</label><input id="dWpp"></div>
@@ -330,6 +340,7 @@ async function openDetail(id){
   document.getElementById('dInsta').value=t.instagram_handle||'';
   document.getElementById('dPageId').value=t.page_id||'';
   document.getElementById('dKind').value=t.tenant_type||'medico';
+  document.getElementById('dModel').value=t.model||'';
   document.getElementById('dPhone').value=t.phone||'';
   document.getElementById('dWpp').value=t.whatsapp||'';
   document.getElementById('dAddr').value=t.address||'';
@@ -532,6 +543,7 @@ async function saveDetail(){
     instagram_handle:document.getElementById('dInsta').value.trim(),
     page_id:document.getElementById('dPageId').value.trim()||null,
     tenant_type:document.getElementById('dKind').value,
+    model:document.getElementById('dModel').value||null,
     phone:document.getElementById('dPhone').value.trim(),
     whatsapp:document.getElementById('dWpp').value.trim(),
     address:document.getElementById('dAddr').value.trim()
