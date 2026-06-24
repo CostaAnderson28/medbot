@@ -43,6 +43,20 @@ function getPageAccessTokenForDoctor(doctorId) {
   return PAGE_ACCESS_TOKEN || '';
 }
 
+// Retorna o NOME da env var do token de um tenant (pra mensagens de log/diagnostico).
+// Espelha getPageAccessTokenForDoctor: tenants legados tem nomes historicos.
+function getPageTokenEnvVarName(doctorId) {
+  const legacyNames = {
+    'dr-arrascaeta': 'PAGE_TOKEN_ARRASCAETA',
+    'dr-antonio': 'PAGE_TOKEN_ANTONIO',
+    'oftalmoclinica-icarai': 'PAGE_TOKEN_OFTALMOCLINICA',
+    'r15-madeireira': 'PAGE_TOKEN_R15MADEIREIRA',
+    'ita-carros': 'PAGE_TOKEN_ITACARROS'
+  };
+  return legacyNames[doctorId]
+    || 'PAGE_TOKEN_' + String(doctorId || '').replace(/-/g, '').toUpperCase();
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -610,7 +624,26 @@ export async function sendInstagramResponse(senderId, text, doctorId) {
 
     if (!response.ok) {
       const error = await response.json();
-      console.error('Instagram API error:', error);
+      const apiError = error?.error || {};
+      const isTokenInvalid = apiError.code === 190 || apiError.type === 'OAuthException';
+      const logCtx = {
+        doctorId,
+        senderId,
+        envVar: getPageTokenEnvVarName(doctorId),
+        code: apiError.code ?? null,
+        subcode: apiError.error_subcode ?? null,
+        type: apiError.type ?? null,
+        message: apiError.message ?? null,
+        fbtrace_id: apiError.fbtrace_id ?? null,
+        ...getLogTimeContext()
+      };
+      if (isTokenInvalid) {
+        // Token da página invalidado (troca de senha / sessão expirada pelo Meta).
+        // Regerar o token e atualizar a env var indicada em logCtx.envVar.
+        console.error('[Instagram][token_invalid]', logCtx);
+      } else {
+        console.error('[Instagram][send_error]', logCtx);
+      }
       return false;
     }
 
