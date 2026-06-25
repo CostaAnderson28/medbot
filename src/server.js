@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { setupDatabase, getDb } from './db/setup.js';
 import { buildPrompt } from './prompt-builder.js';
-import { parseInstagramMessage, handleInstagramMessage, sendInstagramResponse, fetchInstagramProfile } from './instagram-handler.js';
+import { parseInstagramMessage, handleInstagramMessage, handleInstagramReferral, sendInstagramResponse, fetchInstagramProfile } from './instagram-handler.js';
 import { authMiddleware } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import scheduleRoutes from './routes/schedule.js';
@@ -119,12 +119,17 @@ function buildReducedRecentMessages(messages) {
   return filtered.length ? filtered : messages;
 }
 
+// Detecta referencia temporal numa mensagem do bot. O trecho de DATA escrita exige
+// nome de mes (ex.: "26 de junho") pra NAO confundir com termos do dominio
+// (ex.: "-4 de miopia", "2 de astigmatismo") — antes a regex casava "numero + de +
+// qualquer palavra" e apagava respostas clinicas inteiras do historico, fazendo o
+// bot repetir tudo por nao ver as proprias mensagens.
+const TEMPORAL_PATTERN_RE = /(\b(hoje|amanha|amanhã|ontem)\b)|(\b\d{1,2}\/\d{1,2}\/\d{2,4}\b)|(\b\d{1,2}\s+de\s+(janeiro|fevereiro|marco|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b)/i;
 function shouldDropTemporalAssistantMessage(message) {
   if (!message || message.role !== 'assistant' || typeof message.content !== 'string') return false;
   const text = message.content.toLowerCase();
   if (text.includes('contexto temporal atual')) return true;
-  const temporalPattern = /(\b(hoje|amanha|amanhã|ontem)\b)|(\b\d{1,2}\/\d{1,2}\/\d{2,4}\b)|(\b\d{1,2}\s+de\s+[a-z]+\b)/i;
-  return temporalPattern.test(text);
+  return TEMPORAL_PATTERN_RE.test(text);
 }
 
 function stripTemporalAssistantHistory(messages) {
@@ -184,7 +189,12 @@ function buildTemporalReminderMessage() {
 }
 
 async function callClaude(systemPrompt, messages, ctx = {}) {
-  const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
+  // Prompt estatico cacheado (cache_control); contexto temporal num bloco separado
+  // apos o breakpoint pra nao invalidar o cache a cada minuto.
+  const systemBlocks = [
+    { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: buildTemporalSystemContext() }
+  ];
   const model = ctx.model || ANTHROPIC_MODEL_PRIMARY;
   const reqCtx = {
     channel: ctx.channel || 'api-chat',
@@ -205,7 +215,7 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 500, system: systemWithTime, messages }),
+        body: JSON.stringify({ model, max_tokens: 500, system: systemBlocks, messages }),
         signal: controller.signal
       });
       clearTimeout(timer);
@@ -394,6 +404,65 @@ app.get('/webhook', (req, res) => {
   res.sendStatus(403);
 });
 
+// Processa um evento normalizado do webhook (mesma logica pros formatos
+// `changes` e `messaging`). Trata: echo/deleted/read, texto, imagem (visao)
+// e anuncio (referral sem texto -> saudacao de boas-vindas).
+async function processInboundEvent(event, pageId, doctorId, source) {
+  if (event?.message?.is_echo) {
+    console.log('[Webhook][skip_echo]', { pageId, doctorId, source, ...getLogTimeContext() });
+    return;
+  }
+  if (event?.message?.is_deleted) {
+    console.log('[Webhook][skip_deleted]', { pageId, doctorId, source, ...getLogTimeContext() });
+    return;
+  }
+  if (event?.read) {
+    console.log('[Webhook][read_receipt]', { pageId, doctorId, source, mid: event.read?.mid || null, ...getLogTimeContext() });
+    return;
+  }
+
+  const senderId = event?.sender?.id;
+  const messageText = event?.message?.text;
+  const mid = event?.message?.mid || null;
+  const attachments = Array.isArray(event?.message?.attachments) ? event.message.attachments : [];
+  const imageUrls = attachments
+    .filter(a => a?.type === 'image' && a?.payload?.url)
+    .map(a => a.payload.url);
+  const referral = event?.referral || event?.message?.referral || event?.postback?.referral || null;
+
+  if (!senderId) {
+    console.warn('[Webhook][invalid_message]', { pageId, doctorId, source, hasSender: false, ...getLogTimeContext() });
+    return;
+  }
+
+  // Dedupe por mid (quando ha mid). Eventos de anuncio (referral) podem nao ter mid.
+  if (mid && !shouldProcessWebhookMessage(mid, pageId)) {
+    console.warn('[Webhook][skip_duplicate]', { pageId, doctorId, source, mid, ...getLogTimeContext() });
+    return;
+  }
+
+  if (messageText || imageUrls.length) {
+    await handleInstagramMessage(senderId, messageText || '', doctorId, mid, imageUrls);
+    return;
+  }
+
+  if (referral) {
+    await handleInstagramReferral(senderId, doctorId, referral, mid);
+    return;
+  }
+
+  console.warn('[Webhook][invalid_message]', {
+    pageId,
+    doctorId,
+    source,
+    hasSender: true,
+    hasText: false,
+    hasAttachments: Boolean(attachments.length),
+    mid,
+    ...getLogTimeContext()
+  });
+}
+
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
   console.log('[Webhook][received]', { ...getLogTimeContext() });
@@ -419,100 +488,12 @@ app.post('/webhook', async (req, res) => {
       // Formato real do Instagram Webhooks
       for (const change of entry.changes || []) {
         if (change.field !== 'messages') continue;
-        const event = change.value;
-
-        if (event?.message?.is_echo) {
-          console.log('[Webhook][skip_echo]', { pageId, doctorId, source: 'changes', ...getLogTimeContext() });
-          continue;
-        }
-        if (event?.message?.is_deleted) {
-          console.log('[Webhook][skip_deleted]', { pageId, doctorId, source: 'changes', ...getLogTimeContext() });
-          continue;
-        }
-
-        if (event?.read) {
-          console.log('[Webhook][read_receipt]', {
-            pageId,
-            doctorId,
-            source: 'changes',
-            mid: event.read?.mid || null,
-            ...getLogTimeContext()
-          });
-          continue;
-        }
-
-        const senderId = event?.sender?.id;
-        const messageText = event?.message?.text;
-        const mid = event?.message?.mid || null;
-
-        if (!senderId || !messageText) {
-          console.warn('[Webhook][invalid_message]', {
-            pageId,
-            doctorId,
-            source: 'changes',
-            hasSender: Boolean(senderId),
-            hasText: Boolean(messageText),
-            hasAttachments: Boolean(event?.message?.attachments?.length),
-            mid,
-            ...getLogTimeContext()
-          });
-          continue;
-        }
-
-        if (!shouldProcessWebhookMessage(mid, pageId)) {
-          console.warn('[Webhook][skip_duplicate]', { pageId, doctorId, source: 'changes', mid, ...getLogTimeContext() });
-          continue;
-        }
-
-        await handleInstagramMessage(senderId, messageText, doctorId, mid);
+        await processInboundEvent(change.value, pageId, doctorId, 'changes');
       }
 
       // Formato Messenger Platform (fallback)
       for (const event of entry.messaging || []) {
-        if (event.message?.is_echo) {
-          console.log('[Webhook][skip_echo]', { pageId, doctorId, source: 'messaging', ...getLogTimeContext() });
-          continue;
-        }
-        if (event.message?.is_deleted) {
-          console.log('[Webhook][skip_deleted]', { pageId, doctorId, source: 'messaging', ...getLogTimeContext() });
-          continue;
-        }
-
-        if (event.read) {
-          console.log('[Webhook][read_receipt]', {
-            pageId,
-            doctorId,
-            source: 'messaging',
-            mid: event.read?.mid || null,
-            ...getLogTimeContext()
-          });
-          continue;
-        }
-
-        const senderId = event.sender?.id;
-        const messageText = event.message?.text;
-        const mid = event.message?.mid || null;
-
-        if (!senderId || !messageText) {
-          console.warn('[Webhook][invalid_message]', {
-            pageId,
-            doctorId,
-            source: 'messaging',
-            hasSender: Boolean(senderId),
-            hasText: Boolean(messageText),
-            hasAttachments: Boolean(event?.message?.attachments?.length),
-            mid,
-            ...getLogTimeContext()
-          });
-          continue;
-        }
-
-        if (!shouldProcessWebhookMessage(mid, pageId)) {
-          console.warn('[Webhook][skip_duplicate]', { pageId, doctorId, source: 'messaging', mid, ...getLogTimeContext() });
-          continue;
-        }
-
-        await handleInstagramMessage(senderId, messageText, doctorId, mid);
+        await processInboundEvent(event, pageId, doctorId, 'messaging');
       }
     }
   } catch (err) {

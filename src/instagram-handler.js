@@ -18,6 +18,16 @@ const ANTHROPIC_ENABLE_MODEL_FALLBACK = process.env.ANTHROPIC_ENABLE_MODEL_FALLB
 const DEBUG_CLAUDE = process.env.DEBUG_CLAUDE !== '0';
 const MAX_REPLY_SENTENCES = Number(process.env.MAX_REPLY_SENTENCES || 3);
 const MAX_REPLY_CHARS = Number(process.env.MAX_REPLY_CHARS || 360);
+// Quantas mensagens do historico recarregar por turno. Antes era 10 fixo (~5 trocas),
+// o que fazia o bot "esquecer" dados dados no inicio de conversas mais longas.
+const INSTAGRAM_HISTORY_LIMIT = Number(process.env.INSTAGRAM_HISTORY_LIMIT || 40);
+// Limite de bytes pra imagem inline (base64). Acima disso, pede por escrito.
+const VISION_MAX_BYTES = Number(process.env.VISION_MAX_BYTES || 4 * 1024 * 1024);
+const VISION_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+// Instrucao anexada ao turno com imagem: ler e SEMPRE confirmar os valores antes de seguir.
+const VISION_INSTRUCTION = 'O paciente enviou a imagem acima. Leia com atencao qualquer informacao relevante (por exemplo, valores de receita: esferico e cilindrico de OD e OE). Antes de prosseguir, REPITA em texto os valores ou dados que voce entendeu e PECA CONFIRMACAO ao paciente. Se a imagem estiver ilegivel ou incompleta, peca os valores por escrito, sem chutar.';
+// Resposta quando ha anexo mas nao foi possivel ler a imagem.
+const IMAGE_UNREADABLE_REPLY = 'Recebi seu anexo, mas nao consegui abrir a imagem por aqui. Pode me enviar as informacoes por escrito, por favor?';
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
@@ -216,12 +226,17 @@ function isGreetingOnlyMessage(text) {
   return greetingPattern.test(normalized);
 }
 
+// Detecta referencia temporal numa mensagem do bot. O trecho de DATA escrita exige
+// nome de mes (ex.: "26 de junho") pra NAO confundir com termos do dominio
+// (ex.: "-4 de miopia", "2 de astigmatismo") — antes a regex casava "numero + de +
+// qualquer palavra" e apagava respostas clinicas inteiras do historico, fazendo o
+// bot repetir tudo por nao ver as proprias mensagens.
+const TEMPORAL_PATTERN_RE = /(\b(hoje|amanha|amanhã|ontem)\b)|(\b\d{1,2}\/\d{1,2}\/\d{2,4}\b)|(\b\d{1,2}\s+de\s+(janeiro|fevereiro|marco|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b)/i;
 function shouldDropTemporalAssistantMessage(message) {
   if (!message || message.role !== 'assistant' || typeof message.content !== 'string') return false;
   const text = message.content.toLowerCase();
   if (text.includes('contexto temporal atual')) return true;
-  const temporalPattern = /(\b(hoje|amanha|amanhã|ontem)\b)|(\b\d{1,2}\/\d{1,2}\/\d{2,4}\b)|(\b\d{1,2}\s+de\s+[a-z]+\b)/i;
-  return temporalPattern.test(text);
+  return TEMPORAL_PATTERN_RE.test(text);
 }
 
 function stripTemporalAssistantHistory(messages) {
@@ -369,10 +384,41 @@ export async function fetchInstagramProfile(senderId, doctorId) {
 }
 
 /**
+ * Baixa uma imagem (URL do anexo da Meta) e devolve base64 + media_type,
+ * pra mandar como bloco de imagem pro Claude (visao). Retorna null se falhar,
+ * se o tipo nao for suportado ou se passar do limite de tamanho.
+ */
+async function fetchImageAsBase64(url) {
+  if (!url) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const mediaType = VISION_ALLOWED_TYPES.includes(contentType) ? contentType : 'image/jpeg';
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length || buf.length > VISION_MAX_BYTES) return null;
+    return { mediaType, data: buf.toString('base64') };
+  } catch (_) {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
+/**
  * Faz uma chamada para Claude (igual ao server.js)
  */
 async function callClaude(systemPrompt, messages, ctx = {}) {
-  const systemWithTime = `${systemPrompt}\n\n${buildTemporalSystemContext()}`;
+  // System em blocos: o prompt estatico (grande) e cacheado via cache_control;
+  // o contexto temporal (dinamico, muda a cada minuto) fica num bloco separado
+  // DEPOIS do breakpoint pra nao invalidar o cache. Caching e no-op se o bloco
+  // ficar abaixo do minimo do modelo (1024 tok Sonnet / 4096 Haiku) — sem erro.
+  const systemBlocks = [
+    { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: buildTemporalSystemContext() }
+  ];
   const model = ctx.model || ANTHROPIC_MODEL_PRIMARY;
   const reqCtx = {
     channel: ctx.channel || 'instagram',
@@ -401,7 +447,7 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
         body: JSON.stringify({
           model,
           max_tokens: 500,
-          system: systemWithTime,
+          system: systemBlocks,
           messages
         }),
         signal: controller.signal
@@ -472,7 +518,15 @@ async function callClaude(systemPrompt, messages, ctx = {}) {
         return null;
       }
 
-      claudeLog('info', 'attempt_success', { ...reqCtx, attempt: attemptNo, maxAttempts, outputChars: extracted.normalizedText.length, outputSource: extracted.source });
+      claudeLog('info', 'attempt_success', {
+        ...reqCtx,
+        attempt: attemptNo,
+        maxAttempts,
+        outputChars: extracted.normalizedText.length,
+        outputSource: extracted.source,
+        cacheCreate: data?.usage?.cache_creation_input_tokens ?? null,
+        cacheRead: data?.usage?.cache_read_input_tokens ?? null
+      });
       return extracted.normalizedText;
     } catch (error) {
       clearTimeout(timer);
@@ -656,34 +710,65 @@ export async function sendInstagramResponse(senderId, text, doctorId) {
   }
 }
 
+// Numero de mensagens ja existentes na conversa (pra saber se e o primeiro turno).
+function conversationMessageCount(doctorId, senderId) {
+  const db = getDb();
+  try {
+    const c = db.prepare('SELECT id FROM conversations WHERE doctor_id=? AND sender_id=? ORDER BY started_at DESC LIMIT 1').get(doctorId, senderId);
+    if (!c) return 0;
+    return Number(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?').get(c.id)?.n || 0);
+  } finally {
+    db.close();
+  }
+}
+
+// Delay "humano" configurado por tenant (delay_first/delay_min/delay_max, em segundos).
+// Primeiro turno usa delay_first; demais, aleatorio entre min e max. Mesma semantica do /api/chat.
+function computeSendDelayMs(doctor, isFirst) {
+  const dFirst = (doctor?.delay_first ?? 3) * 1000;
+  const dMin = (doctor?.delay_min ?? 2) * 1000;
+  const dMax = (doctor?.delay_max ?? 3) * 1000;
+  if (isFirst) return dFirst;
+  const lo = dMin;
+  const hi = Math.max(dMax, dMin);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
+
 /**
  * Processa uma mensagem do Instagram:
  * 1. Extrai dados
  * 2. Chama Claude
  * 3. Salva na conversa
  * 4. Envia resposta pro Instagram
- * 
+ *
  * @param {string} senderId - ID do usuário
  * @param {string} messageText - Mensagem recebida
  * @param {string} doctorId - ID do médico
  * @returns {Promise<string>} Resposta enviada
  */
-export async function handleInstagramMessage(senderId, messageText, doctorId, mid = null) {
+export async function handleInstagramMessage(senderId, messageText, doctorId, mid = null, imageUrls = []) {
   try {
-    // Valida entrada
-    if (!senderId || !messageText || !doctorId) {
+    const hasImages = Array.isArray(imageUrls) && imageUrls.length > 0;
+    // Valida entrada (aceita turno so com imagem, sem texto).
+    if (!senderId || !doctorId || (!messageText && !hasImages)) {
       console.error('Missing required parameters');
       return null;
     }
 
     const userMessage = String(messageText || '').trim();
-    if (!userMessage) {
+    if (!userMessage && !hasImages) {
       console.error('Empty user message after normalization');
       return null;
     }
 
+    // Representacao textual do turno do usuario pra persistir no historico
+    // (a imagem em si nao e guardada; so um marcador).
+    const storedUserMessage = userMessage
+      ? (hasImages ? `${userMessage} [imagem anexada]` : userMessage)
+      : '[Paciente enviou uma imagem]';
+
     const traceId = `${doctorId}:${senderId}:${Date.now()}`;
-    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, mid, userChars: userMessage.length, ...getLogTimeContext() });
+    console.log('[Instagram][inbound]', { traceId, doctorId, senderId, mid, userChars: userMessage.length, images: hasImages ? imageUrls.length : 0, ...getLogTimeContext() });
 
     // Verifica se o bot esta pausado pra esta conversa especifica.
     // Se sim, salva a mensagem do usuario no historico mas NAO responde.
@@ -695,9 +780,28 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
         console.log('[Instagram][bot_paused_skip]', { traceId, doctorId, senderId, conversationId: convCheck.id, ...getLogTimeContext() });
         // Salva a mensagem do usuario pra manter historico atualizado
         const profile = await fetchInstagramProfile(senderId, doctorId);
-        trackConversation(doctorId, senderId, 'user', userMessage, profile);
+        trackConversation(doctorId, senderId, 'user', storedUserMessage, profile);
         return null;
       }
+    }
+
+    // Baixa as imagens do anexo (se houver) pra mandar como bloco de visao.
+    // Se nao conseguir ler nenhuma, pede os valores por escrito e encerra o turno.
+    let imageBlocks = [];
+    if (hasImages) {
+      const fetched = (await Promise.all(imageUrls.slice(0, 4).map(fetchImageAsBase64))).filter(Boolean);
+      if (!fetched.length) {
+        console.warn('[Instagram][image_fetch_failed]', { traceId, doctorId, senderId, urls: imageUrls.length, ...getLogTimeContext() });
+        trackConversation(doctorId, senderId, 'user', storedUserMessage, await fetchInstagramProfile(senderId, doctorId));
+        trackConversation(doctorId, senderId, 'assistant', IMAGE_UNREADABLE_REPLY);
+        await sendInstagramResponse(senderId, IMAGE_UNREADABLE_REPLY, doctorId);
+        return IMAGE_UNREADABLE_REPLY;
+      }
+      imageBlocks = fetched.map(img => ({
+        type: 'image',
+        source: { type: 'base64', media_type: img.mediaType, data: img.data }
+      }));
+      console.log('[Instagram][image_received]', { traceId, doctorId, senderId, images: fetched.length, ...getLogTimeContext() });
     }
 
     // Busca prompt do médico
@@ -709,13 +813,19 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
       return errorMsg;
     }
 
-    const isGreetingOnly = isGreetingOnlyMessage(userMessage);
+    // Delay "humano" por tenant, aplicado antes de cada envio ao paciente.
+    const isFirstTurn = conversationMessageCount(doctorId, senderId) === 0;
+    const sendDelayMs = computeSendDelayMs(result.doctor, isFirstTurn);
+
+    // Saudacao curta so vale pra turno de texto puro (imagem nunca e "so saudacao").
+    const isGreetingOnly = !hasImages && isGreetingOnlyMessage(userMessage);
     if (isGreetingOnly) {
       const greetingReply = sanitizeAssistantReply('', {
         userMessage,
         doctorName: result?.doctor?.name || ''
       });
       trackConversation(doctorId, senderId, 'assistant', greetingReply);
+      await delay(sendDelayMs);
       await sendInstagramResponse(senderId, greetingReply, doctorId);
       console.log('[Instagram][greeting_short_reply]', { traceId, doctorId, senderId, replyChars: greetingReply.length, ...getLogTimeContext() });
       return greetingReply;
@@ -727,7 +837,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
     
     let messages = [];
     if (conv) {
-      const history = db.prepare('SELECT role, content FROM messages WHERE conversation_id=? ORDER BY created_at ASC LIMIT 10').all(conv.id);
+      const history = db.prepare('SELECT role, content FROM messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?').all(conv.id, INSTAGRAM_HISTORY_LIMIT).reverse();
       messages = history
         .map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : String(m.content || '') }))
         .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 0);
@@ -735,7 +845,13 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
     db.close();
 
     // Adiciona a mensagem atual manualmente no payload para o Claude.
-    messages.push({ role: 'user', content: userMessage });
+    // Com imagem: conteudo multimodal (blocos de imagem + texto com a instrucao de visao).
+    if (imageBlocks.length) {
+      const visionText = (userMessage ? `${userMessage}\n\n` : '') + VISION_INSTRUCTION;
+      messages.push({ role: 'user', content: [...imageBlocks, { type: 'text', text: visionText }] });
+    } else {
+      messages.push({ role: 'user', content: userMessage });
+    }
 
     const scrubbed = stripTemporalAssistantHistory(messages);
     if (scrubbed.removed > 0) {
@@ -745,7 +861,7 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
 
     // Persiste a mensagem atual do usuário depois da montagem do payload.
     const profile = await fetchInstagramProfile(senderId, doctorId);
-    trackConversation(doctorId, senderId, 'user', userMessage, profile);
+    trackConversation(doctorId, senderId, 'user', storedUserMessage, profile);
 
     claudeLog('info', 'payload_debug', {
       channel: 'instagram',
@@ -755,16 +871,17 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
       messagesCount: messages.length,
       lastTwoRoles: messages.slice(-2).map(m => m.role),
       hasConsecutiveUser: messages.some((m, i) => i > 0 && m.role === 'user' && messages[i - 1]?.role === 'user'),
-      messagesPreview: messages.map((m, i) => ({
-        index: i,
-        role: m.role,
-        chars: m.content.length,
-        preview: m.content.slice(0, 60)
-      }))
+      messagesPreview: messages.map((m, i) => {
+        const c = typeof m.content === 'string' ? m.content : '[conteudo multimodal: imagem]';
+        return { index: i, role: m.role, chars: c.length, preview: c.slice(0, 60) };
+      })
     });
 
     // Lembrete de data/hora atual para evitar respostas com data antiga.
     messages.push(buildTemporalReminderMessage());
+
+    // Delay "humano" configurado por tenant antes de gerar/enviar a resposta.
+    await delay(sendDelayMs);
 
     // Chama Claude
     const rawReply = await callClaudeReliable(result.prompt, messages, { channel: 'instagram', doctorId, senderId, traceId, phase: 'primary', primaryOverride: result.doctor?.model || null });
@@ -821,6 +938,58 @@ export async function handleInstagramMessage(senderId, messageText, doctorId, mi
     console.error('Error handling Instagram message:', error);
     const errorMsg = 'Desculpe, ocorreu um erro. Tente novamente.';
     await sendInstagramResponse(senderId, errorMsg, doctorId);
+    return null;
+  }
+}
+
+/**
+ * Trata um evento de anuncio (Click-to-Instagram-DM): chega so com `referral`/`ad`,
+ * sem texto. Sauda o lead com a saudacao padrao do tenant — mas SO se for um lead
+ * novo (conversa ainda sem mensagens), pra nao saudar duas vezes quando o texto vier
+ * logo em seguida nem reabrir saudacao no meio de um atendimento ja em andamento.
+ */
+export async function handleInstagramReferral(senderId, doctorId, referral = null, mid = null) {
+  try {
+    if (!senderId || !doctorId) return null;
+    const traceId = `${doctorId}:${senderId}:ref:${Date.now()}`;
+
+    const db = getDb();
+    const conv = db.prepare('SELECT id, bot_paused FROM conversations WHERE doctor_id=? AND sender_id=? ORDER BY started_at DESC LIMIT 1').get(doctorId, senderId);
+    let hasMessages = false;
+    if (conv) {
+      const row = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?').get(conv.id);
+      hasMessages = Number(row?.n || 0) > 0;
+    }
+    db.close();
+
+    if (conv && conv.bot_paused === 1) {
+      console.log('[Instagram][referral_skip_paused]', { traceId, doctorId, senderId, mid, ...getLogTimeContext() });
+      return null;
+    }
+    if (hasMessages) {
+      console.log('[Instagram][referral_skip_existing]', { traceId, doctorId, senderId, mid, ...getLogTimeContext() });
+      return null;
+    }
+
+    // Saudacao neutra baseada no horario (mesmo texto que o sanitizer usa pra saudacoes).
+    const greetingReply = `${pickGreetingText('')}! Como posso te ajudar hoje?`;
+
+    const profile = await fetchInstagramProfile(senderId, doctorId);
+    trackConversation(doctorId, senderId, 'assistant', greetingReply, profile);
+    await sendInstagramResponse(senderId, greetingReply, doctorId);
+    console.log('[Instagram][referral_welcome]', {
+      traceId,
+      doctorId,
+      senderId,
+      mid,
+      source: referral?.source || referral?.type || referral?.ref || null,
+      adId: referral?.ad_id || null,
+      replyChars: greetingReply.length,
+      ...getLogTimeContext()
+    });
+    return greetingReply;
+  } catch (error) {
+    console.error('Error handling Instagram referral:', error);
     return null;
   }
 }
