@@ -1,122 +1,323 @@
 MEDBOT - CONTEXTO COMPLETO PARA CONTINUAR EM OUTRA MAQUINA
-Data de geracao: 2026-04-09
+Data de geracao: 2026-06-26
+Branch atual: gummp (HEAD: 226ee79)
+Repo: github.com/CostaAnderson28/medbot
 
+================================================================
 1) RESUMO EXECUTIVO
-- Projeto: chatbot medico com painel web, API em Express e SQLite (better-sqlite3).
-- Integracoes: Instagram webhook (Meta), Claude (Anthropic), autenticacao JWT.
-- Deploy: VPS Hostinger com PM2 + Nginx.
-- Problema principal da sessao: dashboard sem carregar dados em producao.
-- Causa raiz principal encontrada: query SQL de engajadas em src/routes/metrics.js com aspas incorretas (quebrava parsing/execucao).
-- Estado final reportado: app online, health OK, logs antigos ainda mostravam erro anterior (nao necessariamente erro atual).
+================================================================
+- Projeto: chatbot multi-tenant para Instagram DM com painel web,
+  API Express e SQLite (better-sqlite3).
+- Evoluiu de single-tenant (so Dr. Antonio) pra multi-tenant com 5
+  contas + 1 super-admin. Cada tenant tem seu Instagram, prompt,
+  agenda, produtos e instructions proprias.
+- Integracoes: Instagram Graph API (Meta), Anthropic Claude API,
+  autenticacao JWT.
+- Deploy: VPS Hostinger (/opt/medbot) com PM2 + Nginx + Let's Encrypt.
+- Estado: producao funcionando. Ultima sessao focou em Dr. Francisco
+  (tenant novo) e refatorar selecao de modelo Claude por tenant.
 
+================================================================
 2) STACK E ARQUITETURA
-- Backend: Node.js + Express (ESM).
-- Banco: SQLite (better-sqlite3), arquivo data.db.
-- Auth: JWT (middleware em src/middleware/auth.js).
-- Frontend: pagina unica em public/index.html.
-- Rotas principais:
-  - /api/auth
-  - /api/metrics
-  - /api/conversations
-  - /api/settings
-  - /api/schedule
-  - /api/instructions
-  - /webhook (GET verify + POST events Instagram)
+================================================================
+- Backend: Node.js 22 + Express (ESM). Sem build step.
+- Banco: SQLite (better-sqlite3), arquivo data.db. Migracoes
+  idempotentes em src/db/setup.js (rodam na boot).
+- Auth: JWT (src/middleware/auth.js). Dois tipos:
+  - tenant comum (is_admin=0): acessa /
+  - super-admin (is_admin=1): acessa /admin.html
+- Frontend: HTML/CSS/JS vanilla, sem framework.
+- IA: Anthropic Claude API com fallback automatico de modelo.
 
-3) EVENTOS IMPORTANTES DA SESSAO (RETROSPECTO)
-- Foi identificado que a VPS tinha mais de um app no PM2 (chat-bot antigo + medbot).
-- Em alguns momentos, chat-bot ocupava porta 3000, causando conflito de deploy.
-- Houve falha nativa do better-sqlite3 na VPS (libnode/make/build tools), exigindo rebuild e/ou ferramentas de compilacao.
-- Dashboard local e producao foram confundidos em alguns momentos; no fim ficou claro:
-  - local estava bom
-  - producao estava com versao/estado inconsistente ate ajustar pull/restart/codigo
-- Erro SQL visto no terminal:
-  - SqliteError: no such column: "user"
-  - Indica uso incorreto de role="user" em vez de string literal adequada
+ESTRUTURA DE PASTAS RELEVANTE:
+  src/
+    server.js              # Express + webhook + /api/chat (simulador)
+    instagram-handler.js   # Webhook IG -> Claude -> resposta
+    prompt-builder.js      # Monta prompt do Claude por tenant
+    db/setup.js            # Schema + migracoes + seeds
+    middleware/auth.js     # JWT + adminAuthMiddleware
+    routes/
+      auth.js
+      schedule.js
+      instructions.js      # filtra system_prompt (so admin edita)
+      metrics.js
+      settings.js
+      products.js
+      admin.js             # /api/admin/* (super-admin only)
+  public/
+    index.html             # painel tenant (Dashboard/Conversas/...)
+    admin.html             # painel super-admin (lista tenants, edit)
+    demo.html              # chat demo publico (sem login)
+  scripts/
+    diagnose-instructions.mjs  # debug instructions de um tenant
+    context-ladder.mjs
+    subscribe.mjs
+  backups/                 # gitignored - dumps de prompts pre-mudancas
 
-4) CORRECAO DE CODIGO CRITICA (METRICS)
-Arquivo alvo: src/routes/metrics.js
+================================================================
+3) MULTI-TENANT - 5 CONTAS ATIVAS + 1 ADMIN
+================================================================
+Schema doctors (esta tabela e MULTI-PROPOSITO: tenants normais + admin):
+  id TEXT PK
+  name, clinic, email, password (hash bcrypt)
+  instagram_handle, page_id, phone, whatsapp, address
+  bot_active (0/1) - toggle global do bot
+  prompt_kind ('medico' | 'custom_full') - como montar o prompt
+  tenant_type ('medico' | 'empresa') - decide abas do painel
+  is_admin (0/1) - 1 = super-admin
+  model TEXT NULL - override do modelo Claude (null = usa env default)
+  delay_first, delay_min, delay_max - delays do simulador
+  created_at, updated_at
 
-Ponto critico:
-- Query de engajadas precisava evitar quebra por aspas no JavaScript e no SQL.
+TENANTS ATIVOS:
+  1. dr-antonio              - Medico individual (Dr. Antonio)
+  2. oftalmoclinica-icarai   - Secretaria institucional (1a pessoa do plural)
+  3. r15-madeireira          - Empresa (madeireira, com produtos)
+  4. ita-carros              - Empresa (compra de carros, fluxo Q&A)
+  5. dr-francisco            - Medico individual (Dr. Francisco Bandeira)
+                               page_id: 17841402254604574
+                               Tem prompt MUITO complexo (funil 8 etapas)
+                               Usa Opus 4-7 por override (Sonnet nao da conta)
 
-Forma segura recomendada:
-engajadas: q("SELECT COUNT(DISTINCT c.id) as count FROM conversations c WHERE c.doctor_id=? AND (SELECT COUNT(*) FROM messages WHERE conversation_id=c.id AND role='user') > 1"),
+ADMIN:
+  admin@medbot.local - super-usuario
+  CREDENCIAIS estao em acessos.md (gitignored, local apenas)
 
-Observacao:
-- Evitar colocar SQL com role='user' dentro de string JS com aspas simples externas sem escape correto.
+================================================================
+4) ARQUITETURA DE PROMPT (MUDOU MUITO!)
+================================================================
+ANTES era hardcoded em prompt-builder.js (3 variantes: defaultPrompt,
+clinicaPrompt, arrascaetaPrompt). AGORA tudo unificado via DB:
 
-5) SINAIS OPERACIONAIS NA VPS (VERIFICADOS)
-- PM2 ja mostrou:
-  - chat-bot: stopped
-  - medbot: online
-  - polymarket-copy-bot: online
-- Health endpoint retornou OK:
-  - {"status":"ok","uptime":...}
-- Logs ainda continham stacktrace antigo de metrics.js (erro historico).
+CAMADAS DO PROMPT (rendered em ordem):
+  1. system_prompt (instructions.category='system_prompt')
+     - markdown completo da persona/regras
+     - SOMENTE admin edita via /admin.html -> tab System Prompt
+     - cliente NAO ve nem mexe (rota /api/instructions filtra)
+  2. Instructions por categoria (cliente edita via /)
+     - memoria, convenios, procedimentos, pos_operatorio,
+       agendamento, personalizado (+ categorias custom)
+     - renderizadas com header natural "## NOME_CATEGORIA"
+     - NAO usar header "## ORIENTACOES DO CLIENTE" (LLM trata como menor)
+  3. Schedule (estruturado, tabela schedules)
+     - rendered como "## AGENDA SEMANAL"
+  4. Products (estruturado, tabela products)
+     - rendered como "## CATALOGO DE PRODUTOS" agrupado por categoria
 
-6) COMANDOS UTEIS DE OPERACAO (PRODUCAO)
-A) Atualizar codigo no servidor
-- cd /opt/medbot
-- git pull origin main
-- pm2 restart medbot
+INTERPOLACAO em runtime: {phone}, {whatsapp}, {clinic}, {address}, {name}.
 
-B) Ver status/logs
-- pm2 list
-- pm2 logs medbot --lines 50 --nostream
-- curl -s http://localhost:3000/health
+CONTEXTO TEMPORAL: data/hora atual em America/Sao_Paulo e injetada
+como mensagem do usuario "[Sistema: A data e hora atual e ...]" a cada
+chamada (evita o LLM usar datas do historico).
 
-C) Limpar logs antigos para nao confundir diagnostico
-- pm2 flush
-- pm2 restart medbot
-- pm2 logs medbot --lines 20 --nostream
+================================================================
+5) MODELOS CLAUDE (REFATORADO NESTA SESSAO)
+================================================================
+DEFAULTS GLOBAIS (no .env):
+  ANTHROPIC_MODEL_PRIMARY=claude-sonnet-4-6
+  ANTHROPIC_MODEL_FALLBACK=claude-haiku-4-5-20251001
 
-D) Se better-sqlite3 quebrar por build nativo
-- apt update && apt install -y build-essential python3-dev
-- cd /opt/medbot
-- npm rebuild better-sqlite3
-- pm2 restart medbot
+  (os antigos claude-sonnet-4-20250514 e claude-3-5-haiku-20241022
+   foram descontinuados pela Anthropic - resultavam em 404
+   not_found_error. Atualizados pra modelos atuais.)
 
-7) FLUXO RECOMENDADO DAQUI PRA FRENTE
-- Corrigir e validar localmente.
-- Commit e push para main.
-- Na VPS: pull + restart + health + logs.
-- So depois validar no navegador.
+OVERRIDE POR TENANT:
+  doctors.model TEXT NULL
+  - null = usa global do .env
+  - string = sobrescreve (ex.: 'claude-opus-4-7' pra Dr. Francisco)
+  - Editavel via admin: /admin.html -> Editar tenant -> tab Dados
+    -> dropdown "Modelo Claude (override por tenant)"
 
-8) CHECKLIST RAPIDO DE DEPLOY (PADRAO)
-1. git status limpo no desenvolvimento.
-2. git push origin main.
-3. VPS: git pull origin main.
-4. VPS: npm install (se dependencias mudarem).
-5. VPS: pm2 restart medbot.
-6. VPS: curl /health.
-7. VPS: testar /api/metrics/summary com token valido.
-8. Navegador: hard refresh.
+CHAMADA: callClaudeReliable(prompt, msgs, {primaryOverride: doctor.model})
+em instagram-handler.js e server.js. Implementado dia 26/06/2026.
 
-9) RISCOS/ATENCOES
-- Conflito de porta 3000 se outro processo subir na mesma porta.
-- Logs antigos podem mascarar situacao real atual.
-- Alteracao manual na VPS sem versionamento gera divergencia entre local e producao.
-- Evitar editar arquivo direto na VPS, preferir fluxo local -> GitHub -> pull.
+CASO DE USO: Dr. Francisco tem funil complexo de 8 etapas + 4
+memorias + regras restritivas combinadas. Sonnet 4.6 ignora regras
+negativas ("nunca repita", "so 1 vez"). Opus 4.7 segue. Cada tenant
+individual pode ser ajustado pela margem desejada.
 
-10) ESTADO ATUAL INFORMADO NA CONVERSA
-- Codigo foi ajustado e enviado para GitHub.
-- VPS fez pull e reinicio.
-- Health retornou OK.
-- Necessario apenas confirmar logs limpos e rotas de metrics respondendo com JSON apos restart limpo.
+================================================================
+6) ENV VAR DE TOKEN POR TENANT (REFATORADO)
+================================================================
+ANTES era hardcoded em instagram-handler.js:
+  const byDoctor = {'dr-arrascaeta': PAGE_TOKEN_ARRASCAETA, ...};
 
-11) TESTES RAPIDOS DE VALIDACAO FUNCIONAL
-- Login:
-  POST /api/auth/login
-- Dashboard data:
-  GET /api/metrics/summary
-  GET /api/metrics/recent
-- Conversas:
-  GET /api/conversations
+AGORA e DINAMICO: nome do env var derivado do doctor_id:
+  doctor_id 'dr-fulano' -> env PAGE_TOKEN_DRFULANO
+  doctor_id 'clinica-x' -> env PAGE_TOKEN_CLINICAX
+  Regra: strip dashes, uppercase.
 
-12) PROXIMOS PASSOS SUGERIDOS
-- Executar limpeza de logs e validar ausencia de erro novo.
-- Validar dashboard em producao com hard refresh.
-- Se ainda houver problema visual, tratar separadamente (UI/UX) sem misturar com erro de backend.
+Tenants legados (5 originais) mantem legacyMap pro nome historico
+(PAGE_TOKEN_ANTONIO, PAGE_TOKEN_OFTALMOCLINICA, etc).
+
+NOVOS TENANTS: so adicionar PAGE_TOKEN_<DOCTORID> no .env. Sem
+mudanca de codigo.
+
+================================================================
+7) FEATURES POR CONVERSA (TENANT PAINEL)
+================================================================
+Aba "Conversas" no painel tenant tem por conversa:
+  - Pausar/Retomar bot (toggle especifico) - bot deixa de responder
+    pra esse paciente sem desativar geral
+  - Zerar contexto - apaga mensagens da conversa, mantem lead_name
+  - Mensagem manual (atendimento humano)
+
+Schema: conversations.bot_paused INTEGER DEFAULT 0
+Endpoints: PUT/POST /api/conversations/:id/{pause,clear-context}
+
+instagram-handler.js: verifica bot_paused antes de processar. Se
+pausado, salva a msg do usuario no historico mas NAO responde.
+
+================================================================
+8) PROBLEMAS CONHECIDOS / EM ABERTO
+================================================================
+DR. FRANCISCO (tenant complexo):
+  - Bot repete trechos (Clear, intro) mesmo com regras explicitas
+  - Solucao parcial: Opus 4-7 ao inves de Sonnet
+  - Solucao definitiva: SIMPLIFICAR o system_prompt (8 etapas e muito)
+  - Memoria sobre "Tecnica Clear" foi editada pra ser mais conservadora
+
+OFTALMOCLINICA:
+  - Quando o cliente edita instructions, regras ambiguas viram bugs
+    (ex.: "Pergunta geral: cite 8-10 principais" disparava em qualquer
+    pergunta, nao so de convenio). Cliente teve que reescrever pra
+    "Quando a pergunta for geral RELACIONADA A CONVENIOS...".
+  - Educa o cliente: regras devem ser ESPECIFICAS, nao genericas.
+
+DIMINUTIVOS:
+  - Mesmo com regra explicita no system_prompt, Sonnet usa
+    "certinho", "tudinho", etc. as vezes. Opus segue melhor.
+
+================================================================
+9) OTIMIZACOES DE CUSTO (PLANEJADAS, NAO IMPLEMENTADAS)
+================================================================
+Conversamos sobre 3 otimizacoes que podem reduzir custo em ~85%:
+
+A) PROMPT CACHING (Anthropic API)
+   - Maior impacto: ~85% reducao no input cost
+   - Marcar system block como cacheavel com cache_control: 'ephemeral'
+   - TTL 5 min, mantem cache quente entre mensagens
+   - Mover contexto temporal pra fora do system block (system precisa
+     ser estavel byte-a-byte pro cache hitar)
+   - IMPLEMENTACAO: ~15 linhas em instagram-handler.js e server.js
+
+B) MODELO POR TENANT - JA IMPLEMENTADO (commit 226ee79)
+   - Sonnet 4.6 default global, Opus override individual no Dr. Francisco
+
+C) REDUZIR max_tokens DE OUTPUT
+   - Atual: 500. Sanitizer corta em 4 frases / 480 chars mesmo.
+   - Trocar pra 350 reduz teto de output cost (5x mais caro/token).
+
+Quando retomar: comecar pela A (caching) que e o maior ganho.
+
+================================================================
+10) BUGS RESOLVIDOS NA ULTIMA SESSAO
+================================================================
+- Sanitizer cortava frases em abreviacoes ("o Dr. Francisco" virava
+  2 frases). Adicionado PROTECTED_ABBREV (Dr., Dra., Sr., etc.).
+- Saudacao hardcoded "Sou o ${doctor.name}" impersonava tenants com
+  persona de secretaria (Dr. Francisco). Removido. Agora so "Como
+  posso te ajudar hoje?". Identidade fica 100% com o system_prompt.
+- URL sendo cortada por max_chars cap quando aparecia no final da
+  resposta. Sanitizer agora preserva sentencas com URL.
+- CTA-stripping global removia links uteis. Removido.
+- Modelos deprecated (sonnet-4-20250514 + haiku-3-5-20241022)
+  resultavam em 404. Atualizados defaults pra sonnet-4-6 e haiku-4-5.
+
+================================================================
+11) ESTRUTURA DO BANCO COMPLETA
+================================================================
+Tabelas (em ordem):
+  doctors           - tenants + admin (multi-proposito)
+  schedules         - agenda semanal por tenant
+  instructions      - instructions por categoria (inclui system_prompt
+                      como categoria especial - so admin)
+  conversations     - 1 por (doctor_id, sender_id), tem bot_paused
+  messages          - historico de mensagens (FK conversation_id)
+  products          - catalogo (so tenants com tenant_type='empresa'
+                      veem aba Produtos)
+
+MIGRACOES IDEMPOTENTES em src/db/setup.js. Cada ALTER e guardado por
+PRAGMA table_info pra ser safe rodar varias vezes.
+
+================================================================
+12) COMANDOS DE OPERACAO
+================================================================
+DEPLOY:
+  cd /opt/medbot
+  git pull
+  pm2 restart medbot
+
+STATUS:
+  pm2 list
+  pm2 logs medbot --lines 50 --nostream
+  curl -s http://localhost:3000/health
+
+DIAGNOSTICOS:
+  # Ver instructions de um tenant + render final do prompt
+  node scripts/diagnose-instructions.mjs <doctor_id>
+  node scripts/diagnose-instructions.mjs <doctor_id> --search <termo>
+
+  # Ver qual modelo respondeu nas ultimas mensagens
+  pm2 logs medbot --lines 500 --nostream 2>&1 | awk '
+    /attempt_success/ { status="OK " }
+    /api_error/ { status="ERR" }
+    /model:/ {
+      if (status != "") { print status, $0; status="" }
+    }' | sort | uniq -c | sort -rn
+
+DB DIRETO (debug):
+  node -e "
+  import('better-sqlite3').then(m=>{
+    const db=new m.default('/opt/medbot/data.db');
+    console.table(db.prepare('SELECT id,name,model,bot_active FROM doctors').all());
+    db.close();
+  });
+  "
+
+LIMPAR CONTEXTO DE UMA CONVERSA (escolher pessoa especifica):
+  node /opt/medbot/clear-context.mjs <doctor_id> --list
+  node /opt/medbot/clear-context.mjs <doctor_id> --clear-sender <sender_id>
+
+================================================================
+13) ACESSOS (CREDENCIAIS)
+================================================================
+TUDO esta em acessos.md (LOCAL, gitignored, NUNCA commitar).
+- Logins de cada tenant
+- Senha do admin
+- Page IDs do Instagram
+- Nomes de env vars dos tokens
+
+Se precisar recriar acessos.md em outra maquina, gerar a partir do
+schema (todos os logins padrao vem do seed em src/db/setup.js).
+Senha padrao do admin: admin2026 (trocar logo no primeiro acesso).
+
+================================================================
+14) PROXIMOS PASSOS SUGERIDOS
+================================================================
+1. SIMPLIFICAR system_prompt do Dr. Francisco - funil de 8 etapas e
+   alem do que Sonnet aguenta. Possivel reduzir pra 4-5 etapas mais
+   amplas. Opus aguenta mas custa mais.
+
+2. IMPLEMENTAR prompt caching (otimizacao A acima). Maior impacto em
+   custo. Tem que mover temporal context pra fora do system block.
+
+3. MELHORAR a regra de "responda apenas a pergunta especifica" no
+   prompt da oftalmoclinica - ainda repete preco em alguns casos.
+
+4. ADICIONAR per-tenant MAX_REPLY_SENTENCES via DB. Dr. Francisco
+   precisa mais espaco (5), outros tenants 3 e suficiente.
+
+5. EDUCAR cliente sobre instrucoes ambiguas. Possivel: validacao no
+   painel que avisa "essa instrucao tem palavra-gatilho generica
+   ('geral', 'sempre', 'quando perguntar') - tem certeza?".
+
+================================================================
+15) ARQUIVOS GITIGNORE NOTAVEIS
+================================================================
+acessos.md, CREDENCIAIS.md  # logins/senhas locais
+backups/                     # dumps de prompts antes de mudancas
+.env                         # config sensivel
+data.db                      # banco local
 
 FIM DO CONTEXTO.
